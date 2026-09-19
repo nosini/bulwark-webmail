@@ -1,0 +1,267 @@
+name: Release Lite (branch build)
+
+# Builds Bulwark Lite from whatever ref triggered the run and publishes the zips
+# as a GitHub release on THIS repository. Meant for fork branches, such as a
+# feature branch you want to install on a Stalwart before it is merged upstream.
+# It is separate from static-lite.yml, which builds main/PRs and attaches zips to
+# upstream-style releases.
+#
+# Two ways to run it:
+#
+#   1. Tag the commit and push the tag (works from any branch, the tag only has to
+#      point at a commit that contains this file):
+#         git tag -s lite-v1.11.0-pgp.1 && git push <fork> lite-v1.11.0-pgp.1
+#
+#   2. Actions > "Release Lite (branch build)" > Run workflow, pick the branch, and
+#      give a tag. GitHub only lists a workflow_dispatch workflow when the file is
+#      on the default branch, so for a feature branch use option 1.
+#
+# Assets on the release (both built from the same commit):
+#   bulwark-lite-stalwart.zip      Stalwart Application bundle, fixed name
+#   bulwark-lite-<tag>.zip         static-host bundle
+#   SHA256SUMS
+#
+# Point a Stalwart Application at the PINNED url, not releases/latest, because
+# releases from here are prereleases and "latest" never selects those:
+#   https://github.com/<owner>/<repo>/releases/download/<tag>/bulwark-lite-stalwart.zip
+#
+# Pushing with the default GITHUB_TOKEN does not trigger other workflows, so the
+# release created here does not make static-lite.yml run. It would if you create
+# the release with a personal token.
+
+on:
+  push:
+    tags: ["lite-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update. Must start with lite- (e.g. lite-v1.11.0-pgp.1)"
+        required: true
+      prerelease:
+        description: "Mark the release as a prerelease"
+        type: boolean
+        default: true
+      run_tests:
+        description: "Run typecheck and the vitest suite before building"
+        type: boolean
+        default: true
+      app_name:
+        description: "App name baked into config.json"
+        required: false
+        default: "Bulwark Webmail"
+      locales:
+        description: "Comma-separated locale subset, e.g. en,de (default: all)"
+        required: false
+      jmap_server_url:
+        description: "Default JMAP server URL for the static bundle (the stalwart bundle always uses the serving Stalwart)"
+        required: false
+      base_path:
+        description: "Sub-path mount for the static bundle, e.g. /webmail (the stalwart bundle detects its prefix at runtime)"
+        required: false
+
+# Two runs for the same tag would race on the same release.
+concurrency:
+  group: lite-release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: Resolve release tag
+    # Never run in the upstream org, in case this file travels in a pull request.
+    if: github.repository_owner != 'bulwarkmail'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.m.outputs.tag }}
+      suffix: ${{ steps.m.outputs.suffix }}
+      prerelease: ${{ steps.m.outputs.prerelease }}
+    steps:
+      - name: Validate the tag
+        id: m
+        # Inputs go through env, never interpolated into the script.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            TAG="$REF_NAME"
+            PRERELEASE=true          # tag pushes from a branch are always prereleases
+          else
+            TAG="$INPUT_TAG"
+            PRERELEASE="$INPUT_PRERELEASE"
+          fi
+          # The lite- prefix keeps these apart from upstream-style v* releases, which
+          # static-lite.yml treats as its own.
+          if ! [[ "$TAG" =~ ^lite-[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::Release tag must match ^lite-[A-Za-z0-9._-]+$ (got: $TAG)"
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "suffix=${TAG#lite-}"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Typecheck and tests
+    needs: meta
+    if: github.event_name == 'push' || inputs.run_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Vitest
+        # Same flags as tests.yml.
+        run: npx vitest run --pool=forks --maxWorkers=2 --testTimeout=15000
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [meta, verify]
+    # verify is skipped when run_tests is off; anything else must have succeeded.
+    if: ${{ !cancelled() && needs.meta.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [static, stalwart]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build static export
+        env:
+          # CI=true lets scripts/lite/prepare.mjs delete the server-only trees in this
+          # disposable checkout.
+          CI: "true"
+          GIT_COMMIT: ${{ github.sha }}
+          LITE_TARGET: ${{ matrix.target }}
+          # The stalwart bundle learns its mount prefix at runtime and refuses a base path.
+          NEXT_PUBLIC_BASE_PATH: ${{ matrix.target == 'static' && inputs.base_path || '' }}
+          LITE_JMAP_SERVER_URL: ${{ matrix.target == 'static' && inputs.jmap_server_url || '' }}
+          LITE_APP_NAME: ${{ inputs.app_name }}
+          LITE_LOCALES: ${{ inputs.locales }}
+        run: npm run build:lite
+
+      - name: Package zip
+        env:
+          TARGET: ${{ matrix.target }}
+          SUFFIX: ${{ needs.meta.outputs.suffix }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "$TARGET" = "stalwart" ]; then
+            # postbuild already packed it, entries at the archive root. The name has no
+            # version on purpose so the release url is predictable.
+            mv bulwark-lite-stalwart.zip dist/
+          else
+            (cd out && zip -qr "../dist/bulwark-lite-${SUFFIX}.zip" .)
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lite-${{ matrix.target }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: [meta, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lite-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Refuse to publish onto a tag that points elsewhere
+        # A re-run must not attach assets built from this commit to a release whose
+        # tag points at a different one.
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh api "repos/${GH_REPO}/commits/${TAG}" --jq .sha 2>/dev/null || true)
+          # A missing tag can leave an error body on stdout; only a real sha counts.
+          if [[ "$EXISTING" =~ ^[0-9a-f]{40}$ ]] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $TAG already points at $EXISTING, but this run built $GITHUB_SHA. Use a new tag."
+            exit 1
+          fi
+
+      - name: Release notes
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          SHORT="${GITHUB_SHA::7}"
+          cat > notes.md <<EOF
+          Bulwark Lite built from \`${SHORT}\` (\`${REF_NAME}\`) of ${GH_REPO}.
+          This is a branch build, not an upstream release.
+
+          **Stalwart Application** (pin this exact url, \`releases/latest\` does not select prereleases):
+
+          \`\`\`
+          https://github.com/${GH_REPO}/releases/download/${TAG}/bulwark-lite-stalwart.zip
+          \`\`\`
+
+          Then run the \`UpdateApps\` action on Stalwart. **Static host**: unzip \`bulwark-lite-${TAG#lite-}.zip\`
+          and see the \`LITE-README.md\` inside.
+
+          Checksums are in \`SHA256SUMS\`.
+          EOF
+
+      - name: Create or update the release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file notes.md --prerelease="$PRERELEASE"
+          else
+            # --target only matters when the tag does not exist yet (dispatch runs).
+            gh release create "$TAG" dist/* \
+              --title "Bulwark Lite ${TAG#lite-}" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA" \
+              --prerelease="$PRERELEASE"
+          fi
+          echo "Release: https://github.com/${GH_REPO}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"
