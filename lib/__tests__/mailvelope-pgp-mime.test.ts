@@ -180,10 +180,13 @@ describe('buildPgpMimeMessage: headers', () => {
     expect(() => buildPgpMimeMessage({ ...base, to: [], cc: [] })).toThrow(/recipient/);
   });
 
-  it('picks a new boundary when the armor would contain the delimiter', () => {
+  it('rejects armor that could collide with the MIME boundary', () => {
+    // A line starting with "--" is neither radix-64 data nor an armor header,
+    // so armor that could collide with the delimiter is now refused before
+    // buildPgpMimeMessage picks a boundary at all. The retry loop there stays
+    // as a backstop, but no payload reaching it can trigger it.
     const hostile = ARMOR.replace('=AbCd', '--bulwark-pgp-test-boundary\n=AbCd');
-    const { raw } = buildPgpMimeMessage({ ...base, armored: hostile });
-    expect(raw).not.toContain('boundary="bulwark-pgp-test-boundary"');
+    expect(() => buildPgpMimeMessage({ ...base, armored: hostile })).toThrow(/armored PGP MESSAGE/);
   });
 });
 
@@ -199,9 +202,32 @@ describe('assertArmoredMessage: never wraps anything but ciphertext', () => {
     ['a cleartext-signed message', '-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nhi\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----'],
     ['a truncated block', '-----BEGIN PGP MESSAGE-----\n\nabc'],
     ['text around the block', `secret text\n${ARMOR}`],
+    // A greedy BEGIN...END match spans the inner END/BEGIN pair, so these two
+    // used to read as one valid block and the plaintext went out on the wire.
+    ['plaintext sandwiched between two blocks', `${ARMOR}\nMeet me at noon.\n${ARMOR}`],
+    ['two concatenated blocks', `${ARMOR}\n${ARMOR}`],
+    ['plaintext appended inside the markers', ARMOR.replace('=AbCd', 'Meet me at noon.')],
+    ['a block whose body is prose', '-----BEGIN PGP MESSAGE-----\n\nMeet me at noon.\n-----END PGP MESSAGE-----'],
+    ['an empty block', '-----BEGIN PGP MESSAGE-----\n\n-----END PGP MESSAGE-----'],
+    ['a block with data after the CRC', `${ARMOR.replace('\n-----END', '\nhQEMA1Vn7c1u8bVh\n-----END')}`],
   ])('rejects %s', (_label, payload) => {
     expect(() => assertArmoredMessage(payload)).toThrow(/armored PGP MESSAGE/);
     expect(() => buildPgpMimeMessage({ ...base, armored: payload })).toThrow();
+  });
+
+  it.each([
+    ['no armor headers', ARMOR],
+    ['armor headers', ARMOR.replace('-----\n\n', '-----\nVersion: Mailvelope v6.3.0\nComment: https://mailvelope.com\n\n')],
+    ['an empty header value', ARMOR.replace('-----\n\n', '-----\nComment:\n\n')],
+    ['no CRC-24 footer', ARMOR.replace('\n=AbCd', '')],
+    // Padding lands on its own line when the encoded length is a multiple of
+    // the wrap width.
+    ['base64 padding on its own line', ARMOR.replace('\n=AbCd', '\n==\n=AbCd')],
+    ['no blank line before the data', ARMOR.replace('-----\n\n', '-----\n')],
+    // Only the data lines: real armor never pads its BEGIN/END markers.
+    ['trailing whitespace on data lines', ARMOR.split('\n').map(l => (/^[A-Za-z0-9+/=]/.test(l) ? `${l}  ` : l)).join('\n')],
+  ])('accepts a real block with %s', (_label, payload) => {
+    expect(() => assertArmoredMessage(payload)).not.toThrow();
   });
 
   it('rejects non-ASCII payloads', () => {

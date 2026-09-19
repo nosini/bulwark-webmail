@@ -47,17 +47,59 @@ const FOLD_AT = 76;
  */
 const ENCODED_WORD_BYTES = 39;
 
-const ARMORED_MESSAGE_RE = /^-----BEGIN PGP MESSAGE-----\n[\s\S]+\n-----END PGP MESSAGE-----$/;
+const ARMOR_BEGIN = '-----BEGIN PGP MESSAGE-----';
+const ARMOR_END = '-----END PGP MESSAGE-----';
+/** RFC 4880 §6.2 armor header, e.g. `Version: Mailvelope v6.3.0`. */
+const ARMOR_HEADER_RE = /^[A-Za-z][A-Za-z0-9-]*:( .*)?$/;
+/**
+ * Radix-64 data line (RFC 4880 §6.3). The alternative is a line of nothing but
+ * padding, which happens when the encoded length is a multiple of the wrap
+ * width and the `=` or `==` is carried onto a line of its own.
+ */
+const ARMOR_DATA_RE = /^(?:[A-Za-z0-9+/]+={0,2}|={1,2})$/;
+/** Trailing CRC-24: `=` plus four radix-64 characters. Optional per RFC 9580. */
+const ARMOR_CRC_RE = /^=[A-Za-z0-9+/]{4}$/;
+
+/**
+ * One complete armored block and nothing else.
+ *
+ * Matching only the BEGIN and END markers is not enough: a greedy match spans
+ * an END/BEGIN pair, so `block + plaintext + block` looks like one block. Every
+ * interior line is therefore checked against the armor grammar, which no
+ * marker line and almost no prose can satisfy.
+ */
+function isArmoredMessage(text: string): boolean {
+  const lines = text.split('\n');
+  if (lines.length < 3) return false;
+  if (lines[0] !== ARMOR_BEGIN || lines[lines.length - 1] !== ARMOR_END) return false;
+
+  const body = lines.slice(1, -1).map(line => line.replace(/[ \t]+$/, ''));
+  let i = 0;
+  // Optional armor headers, terminated by a blank line.
+  while (i < body.length && body[i] !== '' && ARMOR_HEADER_RE.test(body[i])) i++;
+  if (i < body.length && body[i] === '') i++;
+
+  let dataLines = 0;
+  for (; i < body.length; i++) {
+    // The CRC-24, when present, is the last line before the END marker.
+    if (ARMOR_CRC_RE.test(body[i])) return dataLines > 0 && i === body.length - 1;
+    if (!ARMOR_DATA_RE.test(body[i])) return false;
+    dataLines++;
+  }
+  return dataLines > 0;
+}
 
 /** Throws unless `armored` is one complete armored `PGP MESSAGE` block. */
 export function assertArmoredMessage(armored: string): string {
   const normalized = armored.replace(/\r\n?/g, '\n').trim();
-  if (!ARMORED_MESSAGE_RE.test(normalized)) {
-    // The last line of defense against wrapping and sending plaintext.
-    throw new Error('Refusing to build a PGP/MIME message: the payload is not an armored PGP MESSAGE');
-  }
+  // Checked before the structure so a non-ASCII byte is named as such rather
+  // than reported as a broken block.
   if (/[^\x20-\x7E\n]/.test(normalized)) {
     throw new Error('Refusing to build a PGP/MIME message: the armored payload is not 7-bit ASCII');
+  }
+  if (!isArmoredMessage(normalized)) {
+    // The last line of defense against wrapping and sending plaintext.
+    throw new Error('Refusing to build a PGP/MIME message: the payload is not an armored PGP MESSAGE');
   }
   return normalized;
 }
