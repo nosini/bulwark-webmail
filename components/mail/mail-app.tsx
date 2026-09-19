@@ -69,7 +69,7 @@ import { DragDropProvider } from "@/contexts/drag-drop-context";
 import { isFilterEmpty, activeFilterCount } from "@/lib/jmap/search-utils";
 import { SearchBox, type ContactSearchField } from "@/components/search/search-box";
 import type { ContactSuggestion } from "@/lib/search-suggestions";
-import type { Attachment } from "@/lib/jmap/types";
+import type { Attachment, SendEmailResult } from "@/lib/jmap/types";
 import { useSearchHistoryStore } from "@/stores/search-history-store";
 import { WelcomeBanner } from "@/components/ui/welcome-banner";
 import { NavigationRail } from "@/components/layout/navigation-rail";
@@ -1674,6 +1674,8 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
     requestReadReceipt?: boolean;
     requestDsn?: boolean;
     requireTls?: boolean;
+    /** PGP/MIME: submits the already-encrypted message; the fields above are blank then. */
+    rawSend?: () => Promise<SendEmailResult>;
   }) => {
     if (!client) return;
 
@@ -1696,7 +1698,9 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
       const effectiveMode = pendingDraft?.mode ?? composerMode;
       const originalEmailId = selectedEmail?.id;
 
-      const result = await sendEmail(sendClient, data.to, data.subject, data.body, data.cc, data.bcc, data.identityId, data.fromEmail, data.draftId, data.fromName, data.htmlBody, data.attachments, data.inReplyTo, data.references, data.delayedUntil, data.envelopeMailFrom, { requestReadReceipt: data.requestReadReceipt, requestDsn: data.requestDsn, requireTls: data.requireTls, localAccountId: data.localAccountId });
+      const result = data.rawSend
+        ? await data.rawSend()
+        : await sendEmail(sendClient, data.to, data.subject, data.body, data.cc, data.bcc, data.identityId, data.fromEmail, data.draftId, data.fromName, data.htmlBody, data.attachments, data.inReplyTo, data.references, data.delayedUntil, data.envelopeMailFrom, { requestReadReceipt: data.requestReadReceipt, requestDsn: data.requestDsn, requireTls: data.requireTls, localAccountId: data.localAccountId });
       submitted = true;
       setShowComposer(false);
       // Sending an edited draft destroys it server-side - and every autosave
@@ -4152,6 +4156,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
                 }}
               >
                 <EmailComposer
+                  pgpSupported
                   key={composerSessionId}
                   mode={pendingDraft?.mode ?? composerMode}
                   composeFromAccountEmail={resolveComposeAccountEmail(

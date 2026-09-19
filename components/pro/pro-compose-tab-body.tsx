@@ -68,7 +68,7 @@ export function ProComposeTabBody({ tabId, data }: ProComposeTabBodyProps) {
     // failure has to propagate rather than be logged away (#702).
     let submitted = false;
     try {
-      const result = await sendEmail(
+      const result = sendData.rawSend ? await sendData.rawSend() : await sendEmail(
         sendClient,
         sendData.to,
         sendData.subject,
@@ -211,6 +211,7 @@ export function ProComposeTabBody({ tabId, data }: ProComposeTabBodyProps) {
     <div className="flex h-full w-full flex-col bg-background">
       <ErrorBoundary fallback={ComposerErrorFallback}>
         <EmailComposer
+          pgpSupported
           key={data.sessionId}
           mode={data.initialData?.mode ?? data.mode}
           replyTo={data.replyTo}

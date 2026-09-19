@@ -9,6 +9,10 @@ import { X, Paperclip, Send, Save, Check, Loader2, AlertCircle, FileText, Bookma
 import { cn, formatFileSize, formatDateTime, generateUUID } from "@/lib/utils";
 import { debug } from "@/lib/debug";
 import { toast } from "@/stores/toast-store";
+import type { SendEmailResult } from "@/lib/jmap/types";
+import { usePgpCompose } from "@/components/pgp/use-pgp-compose";
+import { PgpComposeBanner, PgpComposeToggle } from "@/components/pgp/pgp-compose-controls";
+import { MailvelopeEditor } from "@/components/pgp/mailvelope-editor";
 import { useContextMenu } from "@/hooks/use-context-menu";
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { sanitizeSignatureHtml, sanitizeSignatureHtmlForDisplay, sanitizeEmailHtml, escapeHtml, sanitizePluginBodyHtml } from "@/lib/email-sanitization";
@@ -170,7 +174,19 @@ interface EmailComposerProps {
     requestDsn?: boolean;
     /** Refuse delivery over an unencrypted hop (RFC 8689 REQUIRETLS). */
     requireTls?: boolean;
+    /**
+     * Set for PGP/MIME messages: submits the already-encrypted raw message. The
+     * host must call this instead of building a message from the fields above
+     * (which are empty then), and treat its result like the normal send's.
+     */
+    rawSend?: () => Promise<SendEmailResult>;
   }) => void | Promise<void>;
+  /**
+   * The host's `onSend` honors `rawSend`. PGP encryption is only offered when
+   * this is set, so a host that ignores `rawSend` can never send a blank
+   * plaintext message in place of an encrypted one.
+   */
+  pgpSupported?: boolean;
   onScheduledSendCreated?: () => void | Promise<void>;
   onClose?: () => void;
   /**
@@ -271,6 +287,7 @@ function getDefaultScheduleValue(): string {
 export function EmailComposer({
   onSend,
   onScheduledSendCreated,
+  pgpSupported = false,
   onClose,
   requestCloseRef,
   onDiscardDraft,
@@ -696,6 +713,42 @@ export function EmailComposer({
   // stale client. (#943)
   const composerClientRef = useRef(composerClient);
   composerClientRef.current = composerClient;
+
+  // PGP/MIME via the Mailvelope extension. While it is on, nothing typed may
+  // reach the server (drafts, attachments): see pgp.activeRef in saveDraftOnce
+  // and addFiles.
+  const pgp = usePgpCompose({
+    recipients: [
+      ...expandRecipients(withInput(to, toInput)),
+      ...expandRecipients(withInput(cc, ccInput)),
+      ...expandRecipients(withInput(bcc, bccInput)),
+    ].map((r) => r.email),
+    hasAttachments: attachments.length > 0,
+    getPlainText: () => {
+      const text = plainTextMode ? body : htmlToPlainText(body);
+      return signatureAlreadyInBody
+        ? text
+        : appendPlainTextSignature(text, signatureIdentity, { separator: signatureSeparatorEnabled });
+    },
+    hasServerDraft: () => draftIdRef.current !== null,
+    discardServerDraft: async () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (inflightSaveRef.current) {
+        try { await inflightSaveRef.current; } catch { /* the draft is deleted next anyway */ }
+      }
+      const id = draftIdRef.current;
+      if (id) {
+        await (composerClientRef.current ?? client)?.deleteEmail(id);
+        draftIdRef.current = null;
+        setDraftId(null);
+      }
+    },
+    onEncryptionStarted: () => setBody(''),
+  });
+  const pgpActiveRef = pgp.activeRef;
   const currentIdentityRawId = currentIdentityParts.rawId ?? currentIdentity?.id;
   // Alias identities often lack a configured signature - fall back to the primary
   // identity's signature so replies (which auto-select a matching alias) still
@@ -1067,7 +1120,9 @@ export function EmailComposer({
     bccStr !== initialValuesRef.current.bcc || subject !== initialValuesRef.current.subject ||
     // `!==`, not `>`: a re-opened draft starts with hydrated attachments, and
     // removing one must count as dirty or the removal never reaches the server.
-    body !== initialValuesRef.current.body || attachments.length !== initialValuesRef.current.attachmentCount;
+    body !== initialValuesRef.current.body || attachments.length !== initialValuesRef.current.attachmentCount ||
+    // What is typed in the encrypted editor is invisible here, so never let it close silently.
+    pgpActiveRef.current;
 
   // Ref to latest saveDraft for use in event handlers with stale closures
   const saveDraftRef = useRef<() => Promise<string | null>>(() => Promise.resolve(null));
@@ -1430,6 +1485,12 @@ export function EmailComposer({
 
   const addFiles = useCallback(async (files: File[]) => {
     if (!client || files.length === 0) return;
+    // Files uploaded from here would sit on the server unencrypted; the
+    // encrypted editor has its own attach button.
+    if (pgpActiveRef.current) {
+      toast.info(t('pgp_attachments_blocked'));
+      return;
+    }
 
     // Let plugins veto each upload before it's queued.
     const allowedFiles: File[] = [];
@@ -1555,7 +1616,7 @@ export function EmailComposer({
         );
       }
     }
-  }, [client, t, plainTextMode]);
+  }, [client, t, plainTextMode, pgpActiveRef]);
 
   const handleImageUpload = useCallback(async (
     file: File,
@@ -1706,6 +1767,10 @@ export function EmailComposer({
   // Auto-save draft functionality
   const saveDraftOnce = async (): Promise<string | null> => {
     if (!client || !composerClient) return null;
+    // Never store anything of an encrypted message on the server, not even its
+    // subject and recipients. Every autosave, unload, close and pre-send flush
+    // funnels through here.
+    if (pgpActiveRef.current) return null;
 
     const toAddresses = expandRecipients(withInput(to, toInput)).map(r => formatRecipient(r.name, r.email));
     const ccAddresses = expandRecipients(withInput(cc, ccInput)).map(r => formatRecipient(r.name, r.email));
@@ -1952,15 +2017,17 @@ export function EmailComposer({
   // actual member addresses.
   const toAddresses = expandRecipients(withInput(to, toInput));
   const bodyPlainText = plainTextMode ? body.trim() : htmlToPlainText(body).trim();
-  const hasContent = bodyPlainText || attachments.some(att => att.blobId && !att.uploading);
+  // In PGP mode the text is inside the extension's iframe and cannot be inspected.
+  const hasContent = pgp.active || bodyPlainText || attachments.some(att => att.blobId && !att.uploading);
   // A missing subject no longer blocks Send (#684) - users hit the disabled
   // button without understanding why. It is confirmed in a dialog instead.
-  const canSend = toAddresses.length > 0 && hasContent;
+  const canSend = toAddresses.length > 0 && hasContent && !pgp.sendBlockedReason;
 
   const getSendTooltip = (): string | undefined => {
     if (isWaitingForUploads) return t('validation.attachments_uploading');
     if (canSend) return undefined;
     if (toAddresses.length === 0) return t('validation.recipient_required');
+    if (pgp.sendBlockedReason) return pgp.sendBlockedReason;
     if (!hasContent) return t('validation.body_required');
     return undefined;
   };
@@ -2093,6 +2160,8 @@ export function EmailComposer({
       if (!hasContent) errors.body = true;
       setValidationErrors(errors);
 
+      if (pgp.sendBlockedReason && !errors.to) toast.error(pgp.sendBlockedReason);
+
       if (errors.to) {
         setShakeField('to');
         setTimeout(() => setShakeField(null), 400);
@@ -2110,7 +2179,7 @@ export function EmailComposer({
     }
 
     // Attachment reminder check
-    if (!skipAttachmentCheck && attachmentReminderEnabled) {
+    if (!skipAttachmentCheck && attachmentReminderEnabled && !pgp.active) {
       const hasAttachments = attachmentsRef.current.some(att => att.blobId && !att.uploading && !att.error);
       if (!hasAttachments) {
         // Scan only the user-authored text: the quoted original of a
@@ -2266,7 +2335,10 @@ export function EmailComposer({
           ...inlineAttachments.map(a => ({ name: a.name, type: a.type, size: a.size, blobId: a.blobId, cid: a.cid })),
         ],
       };
-      const sendHandledByPlugin = (await emailHooks.onComposeSend.intercept(composeSendRequest)) === false;
+      // A crypto plugin must not take over a message Mailvelope is encrypting.
+      const sendHandledByPlugin = pgp.active
+        ? false
+        : (await emailHooks.onComposeSend.intercept(composeSendRequest)) === false;
       if (sendHandledByPlugin) {
         if (finalDraftId) {
           // The draft was created through the identity's owning account
@@ -2308,7 +2380,7 @@ export function EmailComposer({
           attachments: uploadedAttachments.map(a => ({ name: a.name, type: a.type, size: a.size })),
           inReplyTo: threadingHeaders?.inReplyTo?.[0],
         };
-        const outgoing = await emailHooks.onTransformOutgoingEmail.transform(transformInput);
+        const outgoing = pgp.active ? transformInput : await emailHooks.onTransformOutgoingEmail.transform(transformInput);
 
         // Strip the cross-account namespace from the identity id before
         // handing it to the parent - the JMAP server only knows the raw
@@ -2319,22 +2391,44 @@ export function EmailComposer({
           ? stripCrossAccountIdentityPrefix(rawIdentityId)
           : { localAccountId: null, rawId: undefined };
 
+        // Without a way to submit the ciphertext the host would send the blank
+        // fields below as a plaintext message, so refuse rather than fall through.
+        let pgpRawSend: (() => Promise<SendEmailResult>) | undefined;
+        if (pgp.active) {
+          if (!composerClient || !fromEmail || !rawId) throw new Error(t('pgp_no_identity'));
+          pgpRawSend = () => pgp.send({
+            client: composerClient,
+            identityId: rawId,
+            from: { name: fromName, email: fromEmail },
+            to: toAddresses.map(r => ({ name: r.name, email: r.email })),
+            cc: ccAddresses.map(r => ({ name: r.name, email: r.email })),
+            bcc: bccAddresses.map(r => ({ name: r.name, email: r.email })),
+            subject,
+            inReplyTo: threadingHeaders?.inReplyTo,
+            references: threadingHeaders?.references,
+            delayedUntil: effectiveDelayedUntil,
+          });
+        }
+
         await onSend?.({
           to: outgoing.to,
           cc: outgoing.cc,
           bcc: outgoing.bcc,
           subject: outgoing.subject,
-          body: outgoing.textBody,
-          htmlBody: outgoing.htmlBody || undefined,
+          // An encrypted message carries no plaintext through here: the host
+          // submits `rawSend`'s result instead of building a message from these.
+          body: pgp.active ? '' : outgoing.textBody,
+          htmlBody: pgp.active ? undefined : (outgoing.htmlBody || undefined),
           draftId: finalDraftId || undefined,
           fromEmail,
           fromName,
           identityId: rawId,
           envelopeMailFrom,
           localAccountId: identityLocalAccountId ?? undefined,
-          attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
+          attachments: !pgp.active && uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
           inReplyTo: threadingHeaders?.inReplyTo,
           references: threadingHeaders?.references,
+          ...(pgpRawSend ? { rawSend: pgpRawSend } : {}),
           requestReadReceipt,
           requestDsn: requestDsn || undefined,
           requireTls: requireTls || undefined,
@@ -2932,9 +3026,12 @@ export function EmailComposer({
           </div>
       </div>
 
+      {pgp.active && <PgpComposeBanner {...pgp.bannerProps} />}
       <div className="flex-1 min-h-0 overflow-auto">
         {/* Body */}
-        {plainTextMode ? (
+        {pgp.active ? (
+          <MailvelopeEditor {...pgp.editorProps} />
+        ) : plainTextMode ? (
           <textarea
             ref={bodyRef}
             value={body}
@@ -2969,7 +3066,7 @@ export function EmailComposer({
         {/* Hide the visual signature preview when the signature has already been
             embedded into the body (compose, above-quote replies, re-opened
             drafts) - it would otherwise read as a second signature. */}
-        {signatureAlreadyInBody ? null
+        {pgp.active || signatureAlreadyInBody ? null
           : plainTextMode ? (
           getPlainTextSignature(signatureIdentity) ? (
             <div className="px-4 pb-3 text-sm leading-6 text-muted-foreground break-words whitespace-pre-wrap font-mono">
@@ -3084,8 +3181,9 @@ export function EmailComposer({
               variant="ghost"
               size="icon"
               onClick={() => fileInputRef.current?.click()}
+              disabled={pgp.active}
               className="h-9 w-9"
-              title={t('attach')}
+              title={pgp.active ? t('pgp_attachments_blocked') : t('attach')}
             >
               <Paperclip className="w-4 h-4" />
             </Button>
@@ -3093,6 +3191,7 @@ export function EmailComposer({
               variant="ghost"
               size="icon"
               onClick={togglePlainTextMode}
+              disabled={pgp.active}
               className={cn(
                 "h-9 w-9",
                 plainTextMode && "bg-muted text-foreground hover:bg-muted"
@@ -3172,6 +3271,13 @@ export function EmailComposer({
               >
                 <LockKeyhole className="w-4 h-4" />
               </Button>
+            )}
+            {pgpSupported && (pgp.available || pgp.active) && (
+              <PgpComposeToggle
+                mode={pgp.mode}
+                onToggleEncrypt={pgp.toggleEncrypt}
+                onToggleSign={pgp.toggleSign}
+              />
             )}
             <PluginSlot name="composer-toolbar" />
             {/* Lets a plugin offer an alternative attachment source (an
@@ -3404,7 +3510,7 @@ export function EmailComposer({
           >
             <div className="p-6">
               <h2 className="text-lg font-semibold text-foreground">{t('close_draft_title')}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">{t('close_draft_message')}</p>
+              <p className="mt-2 text-sm text-muted-foreground">{pgp.active ? t('close_pgp_message') : t('close_draft_message')}</p>
             </div>
             <div className="flex items-center justify-end gap-3 px-6 pb-6">
               <Button variant="outline" onClick={() => dismissCloseDialog()}>
@@ -3413,14 +3519,18 @@ export function EmailComposer({
               <Button variant="destructive" onClick={handleDiscardAndClose}>
                 {t('discard')}
               </Button>
-              <Button onClick={handleSaveDraftAndClose}>
-                <Save className="w-4 h-4 me-2" />
-                {tCommon('save')}
-              </Button>
+              {!pgp.active && (
+                <Button onClick={handleSaveDraftAndClose}>
+                  <Save className="w-4 h-4 me-2" />
+                  {tCommon('save')}
+                </Button>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {pgp.dialog}
 
       {previewAttachment && (
         <FilePreviewModal
