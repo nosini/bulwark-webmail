@@ -12,6 +12,7 @@ import {
   Search,
   User,
   Shield,
+  KeyRound,
   UserPen,
   PalmtreeIcon,
   Calendar,
@@ -45,6 +46,8 @@ import { LayoutSettings } from '@/components/settings/layout-settings';
 import { LanguageSettings } from '@/components/settings/language-settings';
 import { ReadingSettings } from '@/components/settings/reading-settings';
 import { ComposingSettings } from '@/components/settings/composing-settings';
+import { PgpSettings } from '@/components/settings/pgp-settings';
+import { usePgpAvailable } from '@/stores/mailvelope-store';
 import { ContentSendersSettings } from '@/components/settings/content-senders-settings';
 import { AccountSettings } from '@/components/settings/account-settings';
 import { IdentitySettings } from '@/components/settings/identity-settings';
@@ -136,6 +139,7 @@ const tabIcons: Record<Tab, AppIcon> = {
   folders: FolderOpen,
   keywords: Tags,
   security: Shield,
+  pgp: KeyRound,
   content_senders: EyeOff,
   calendar: Calendar,
   contacts: BookUser,
@@ -477,6 +481,8 @@ export function SettingsApp({ linkSegments: routeSegments }: SettingsAppProps = 
   // so the tab is only in the URL once the user is looking at its content.
   // Must sit above the early return below - it is a hook.
   const proInterfaceActive = useProInterfaceActive();
+  // Hook: must sit above the early return below.
+  const pgpAvailable = usePgpAvailable();
   const isFocusedProTab = useIsFocusedProTab();
   const settingsLinkPath = appPath(buildSettingsPath(!isDesktop && !mobileShowContent ? null : activeTab));
   useDeepLinkUrl(
@@ -557,6 +563,8 @@ export function SettingsApp({ linkSegments: routeSegments }: SettingsAppProps = 
 
     // Privacy & Security
     ...(stalwartFeaturesEnabled ? [{ id: 'security' as Tab, label: t('tabs.security'), icon: tabIcons.security, group: 'privacy' as TabGroup }] : []),
+    // Only with the Mailvelope extension present and this origin authorized.
+    ...(pgpAvailable ? [{ id: 'pgp' as Tab, label: t('tabs.pgp'), icon: tabIcons.pgp, group: 'privacy' as TabGroup }] : []),
     { id: 'content_senders', label: t('tabs.content_senders'), icon: tabIcons.content_senders, group: 'privacy' },
 
     // Apps
@@ -684,6 +692,7 @@ export function SettingsApp({ linkSegments: routeSegments }: SettingsAppProps = 
       {effectiveActiveTab === 'folders' && <FolderSettings />}
       {effectiveActiveTab === 'keywords' && <KeywordSettings />}
       {effectiveActiveTab === 'security' && <AccountSecuritySettings />}
+      {effectiveActiveTab === 'pgp' && <PgpSettings />}
       {effectiveActiveTab === 'content_senders' && <ContentSendersSettings />}
       {effectiveActiveTab === 'calendar' && (
         managedAccountId

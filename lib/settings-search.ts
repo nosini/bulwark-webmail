@@ -18,6 +18,7 @@ export type SettingsSearchTab =
   | 'folders'
   | 'keywords'
   | 'security'
+  | 'pgp'
   | 'content_senders'
   | 'calendar'
   | 'contacts'
@@ -117,6 +118,7 @@ export const tabSearchPaths: Record<Tab, string[]> = {
   folders: ['settings.folders'],
   keywords: ['settings.keywords'],
   security: ['settings.security'],
+  pgp: ['settings.pgp'],
   content_senders: [
     'settings.email_behavior.always_light_mode',
     'settings.email_behavior.external_content',
@@ -151,6 +153,7 @@ export const tabKeywords: Record<Tab, string> = {
   folders: 'mailbox subscribe',
   keywords: 'tags labels colors',
   security: 'password 2fa two-factor passkey app password mfa',
+  pgp: 'openpgp gpg encrypt decrypt sign key mailvelope pgp/mime',
   content_senders: 'block sender remote images privacy tracking',
   calendar: 'event schedule appointment meeting timezone',
   contacts: 'address book contact',
