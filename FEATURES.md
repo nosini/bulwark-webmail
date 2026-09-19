@@ -86,6 +86,7 @@
 - External content stays blocked until you say otherwise, and trusted senders are remembered
 - HTML sanitized through DOMPurify
 - S/MIME: manage certificates, then sign, encrypt, decrypt, and verify. Legacy 3DES / PBE is supported, and keys stay isolated per account.
+- PGP through the Mailvelope browser extension, in the full and Lite builds: read PGP/MIME and inline PGP, and send PGP/MIME encrypted (optionally signed). Keys and plaintext stay inside the extension, nothing is saved to the server as a draft, and the UI only appears when the extension is present and the site is authorized. See [docs/mailvelope-pgp.md](docs/mailvelope-pgp.md).
 - Add S/MIME or PGP public keys per account, then turn on Stalwart's encryption at rest against one of them. The algorithm, whether new mail is encrypted on upload, and whether spam training runs before encryption are all configurable.
 - SPF / DKIM / DMARC indicators surface the most severe SPF result and drop the "via" badge on spoofed mail
 - OAuth2 / OIDC with PKCE against Keycloak, Authentik, or the built-in provider, plus OAuth-only mode, OAuth app passwords, and non-interactive SSO for embedded deployments

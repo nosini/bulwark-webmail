@@ -316,7 +316,9 @@ export function buildHeaders({ basePath = "", connectSrc = "*" }) {
     "img-src 'self' data: blob: https:",
     "font-src 'self' https: data:",
     `connect-src 'self' ${connectSrc}`,
-    "frame-src 'self' blob:",
+    // Mailvelope (optional PGP support) renders decrypted mail, its editor and its
+    // key manager in iframes served from the extension's own origin.
+    "frame-src 'self' blob: chrome-extension: moz-extension:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -429,6 +431,41 @@ webmail.example.com {
 `;
 }
 
+/**
+ * The "PGP with Mailvelope" chapter of LITE-README.md. `target` only changes
+ * the last paragraph: what to do about the Content-Security-Policy.
+ */
+export function buildPgpReadmeSection(target) {
+  const csp = target === "stalwart"
+    ? `Stalwart sends no Content-Security-Policy for an Application. If a reverse
+proxy in front of it adds one, its \`frame-src\` must allow the extension's
+frames: \`frame-src 'self' blob: chrome-extension: moz-extension:\`.`
+    : `The generated \`_headers\` already allows the extension's frames
+(\`frame-src 'self' blob: chrome-extension: moz-extension:\`). If your host sets its
+own Content-Security-Policy (nginx, Caddy, a CDN), add those two schemes to its
+\`frame-src\`, otherwise the decrypted-mail and editor frames stay blank.`;
+  return `## PGP with Mailvelope (optional)
+
+Lite can read and send OpenPGP mail (PGP/MIME and inline PGP) through the
+Mailvelope browser extension. Keys and passphrases stay inside the extension
+and the mail server only ever receives ciphertext. Nothing PGP-related appears
+in the app until all of this is done:
+
+1. Install Mailvelope (Chrome, Edge or Firefox).
+2. In Mailvelope, open **Authorized Domains**, add this site (pattern
+   \`[*.]host.name.tld[:port]\`, for example \`mail.example.com\`) and switch on
+   its **API** option.
+3. Reload Lite. **Settings > PGP encryption** appears: generate or import your
+   key there, and the composer gets an encrypt button.
+
+${csp}
+
+Without the extension, or on a site that is not authorized, Lite behaves
+exactly as before. The subject, sender and recipients of an encrypted message
+are not encrypted, and encrypted messages are never saved as server drafts.
+`;
+}
+
 export function buildReadme({ version, commit, basePath = "", locales, jmapServerUrl = "", demoMode = false }) {
   return `# Bulwark Lite ${version} (${commit})
 
@@ -474,6 +511,7 @@ ${basePath ? `  Both examples serve root-relative paths, so unzip into \`<web ro
 \`_headers\` also carries the recommended security headers. Adjust
 \`connect-src\` to your JMAP server's origin if you prefer a strict policy.
 
+${buildPgpReadmeSection("static")}
 ## What is different from the full Bulwark Webmail
 
 Everything that runs in the browser works: mail, threads, search, compose,
@@ -1246,6 +1284,7 @@ with your settings, publish the resulting \`${STALWART_ZIP_NAME}\` at a URL
 you control, and use that URL as \`resourceUrl\`. \`config.json\` and
 \`policy.json\` inside the zip take the same keys as in the static-host build.
 
+${buildPgpReadmeSection("stalwart")}
 ## Differences from the static-host zip
 
 - One entry document (\`index.html\`) boots every route: Stalwart has no

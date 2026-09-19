@@ -49,7 +49,7 @@ Bulwark Webmail is a self-hosted webmail client for [Stalwart Mail Server](https
 
 Bulwark is a full webmail suite. It bundles the four apps most self-hosters end up wanting:
 
-- **Mail** – threading, unified inbox, cross-account "All accounts" views, full-text search, Sieve filters, S/MIME, templates
+- **Mail** – threading, unified inbox, cross-account "All accounts" views, full-text search, Sieve filters, S/MIME, PGP via the Mailvelope extension ([docs](docs/mailvelope-pgp.md)), templates
 - **Calendar** – month/week/day/agenda, recurring events, iMIP invitations, CalDAV subscriptions
 - **Contacts** – multiple address books, groups, vCard import/export
 - **Files** – Stalwart's JMAP FileNode storage with previews and folder upload

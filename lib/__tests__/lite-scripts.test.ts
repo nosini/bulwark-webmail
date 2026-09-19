@@ -143,6 +143,8 @@ describe('lite build helpers', () => {
     expect(headers).toContain("script-src 'self' 'unsafe-inline'");
     expect(headers).toContain("connect-src 'self' https://mail.example.com");
     expect(headers).toContain("frame-ancestors 'none'");
+    // Mailvelope's decrypt/editor/key-manager iframes come from the extension origin.
+    expect(headers).toContain("frame-src 'self' blob: chrome-extension: moz-extension:");
     expect(headers).toContain('/_next/static/*');
     expect(buildHeaders({ basePath: '/w', connectSrc: '*' })).toMatch(/^\/w\/\*/);
   });
