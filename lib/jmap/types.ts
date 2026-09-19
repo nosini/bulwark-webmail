@@ -99,6 +99,16 @@ export interface Email {
   isSmimeScheduled?: boolean;
 }
 
+/** Options for JMAPClient.sendRawEmail beyond the message itself. */
+export interface RawSendOptions {
+  /**
+   * Always submit with an explicit envelope built from the envelope
+   * recipients, instead of letting the server derive it from the message's
+   * To/Cc/Bcc headers.
+   */
+  forceEnvelope?: boolean;
+}
+
 export interface SendEmailResult {
   scheduled: boolean;
   emailId?: string;

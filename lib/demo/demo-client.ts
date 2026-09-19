@@ -1,5 +1,5 @@
 import type { IJMAPClient, KeywordDiscoveryResult, KeywordMigration } from '@/lib/jmap/client-interface';
-import type { Email, Mailbox, StateChange, AccountStates, Thread, Identity, EmailAddress, ContactCard, AddressBook, VacationResponse, Calendar, CalendarEvent, CalendarEventFilter, CalendarTask, FileNode, ScheduledEmail, SendEmailResult, SharedAccount } from '@/lib/jmap/types';
+import type { Email, Mailbox, StateChange, AccountStates, Thread, Identity, EmailAddress, ContactCard, AddressBook, VacationResponse, Calendar, CalendarEvent, CalendarEventFilter, CalendarTask, FileNode, ScheduledEmail, SendEmailResult, RawSendOptions, SharedAccount } from '@/lib/jmap/types';
 import type { SieveScript, SieveCapabilities } from '@/lib/jmap/sieve-types';
 import { getDemoData, type DemoData } from './demo-data';
 import { generateDemoId } from './demo-utils';
@@ -1158,7 +1158,7 @@ export class DemoJMAPClient implements IJMAPClient {
   async submitRawEmail(blob: Blob,
     identityId: string,
     delayedUntil?: string,
-    _envelopeRecipients?: string[],): Promise<SendEmailResult> {
+    _envelopeRecipients?: string[], _options?: RawSendOptions): Promise<SendEmailResult> {
     const emailId = generateDemoId('email');
     let emailSubmissionId: string | undefined;
     if (delayedUntil) {

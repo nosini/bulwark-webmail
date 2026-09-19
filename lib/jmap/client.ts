@@ -1,5 +1,5 @@
 import { generateUUID } from '@/lib/utils';
-import type { Email, Mailbox, MailboxRights, StateChange, AccountStates, CollectionChanges, ShareNotification, BusyPeriod, CalendarParticipantIdentity, CalendarEventNotification, Thread, Identity, EmailAddress, ContactCard, AddressBook, AddressBookRights, VacationResponse, Calendar, CalendarComponentType, CalendarRights, CalendarEvent, CalendarEventFilter, CalendarTask, CreateCalendarOptions, FileNode, FileNodeFilter, FileNodeRights, Principal, PushSubscription, EmailPushConfig, EmailSubmission, ScheduledEmail, SendEmailResult, SharedAccount } from "./types";
+import type { Email, Mailbox, MailboxRights, StateChange, AccountStates, CollectionChanges, ShareNotification, BusyPeriod, CalendarParticipantIdentity, CalendarEventNotification, Thread, Identity, EmailAddress, ContactCard, AddressBook, AddressBookRights, VacationResponse, Calendar, CalendarComponentType, CalendarRights, CalendarEvent, CalendarEventFilter, CalendarTask, CreateCalendarOptions, FileNode, FileNodeFilter, FileNodeRights, Principal, PushSubscription, EmailPushConfig, EmailSubmission, ScheduledEmail, SendEmailResult, RawSendOptions, SharedAccount } from "./types";
 import type { SieveScript, SieveCapabilities } from "./sieve-types";
 import type { IJMAPClient, KeywordDiscoveryResult, KeywordInfo, KeywordMigration } from "./client-interface";
 import { toWildcardQuery } from "./search-utils";
@@ -8272,6 +8272,7 @@ export class JMAPClient implements IJMAPClient {
     draftMailboxId?: string,
     delayedUntil?: string,
     envelopeRecipients?: string[],
+    options?: RawSendOptions,
   ): Promise<SendEmailResult> {
     const holdForSeconds = delayedUntil ? this.validateDelayedUntil(delayedUntil) : undefined;
     // Upload the raw message
@@ -8283,7 +8284,14 @@ export class JMAPClient implements IJMAPClient {
     const importMailboxId = draftMailboxId || sentMailboxId;
     const identities = await this.getIdentities();
     const identity = identities.find(item => item.id === identityId);
-    const envelope = createDelayedSubmissionEnvelope(identity?.email || this.username, holdForSeconds, envelopeRecipients);
+    const mailFrom = identity?.email || this.username;
+    // Without delay/DSN parameters the helper returns no envelope and the server
+    // derives the recipients from the To/Cc/Bcc headers. A caller that keeps a
+    // recipient out of the headers (PGP/MIME never writes Bcc) must not depend on that.
+    const envelope = options?.forceEnvelope && envelopeRecipients?.length
+      ? (createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients)
+        ?? { mailFrom: { email: mailFrom }, rcptTo: normalizeEnvelopeRecipients(envelopeRecipients) })
+      : createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients);
 
     const methodCalls: [string, Record<string, unknown>, string][] = [
       ['Email/import', {
