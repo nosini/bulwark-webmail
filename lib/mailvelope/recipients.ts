@@ -24,6 +24,18 @@ export function uniqueAddresses(recipients: string[]): string[] {
   return [...new Set(recipients.map(bareAddress).filter(Boolean))];
 }
 
+/**
+ * Whether an address is complete enough to look up. The composer treats what
+ * is being typed in a recipient field as a recipient, and Mailvelope resolves
+ * an address it has no local key for over WKD or a key server — so `bo`,
+ * `bob@` and `bob@exa` would leave the machine one keystroke at a time. A
+ * domain with a dot and a two-letter-or-longer last label is the shortest
+ * thing worth asking about.
+ */
+export function isLookupCandidate(address: string): boolean {
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*\.[A-Za-z]{2,}$/.test(address);
+}
+
 export function classifyKeyMap(addresses: string[], keyMap: MailvelopeKeyMap): RecipientKeyStatus[] {
   return addresses.map((address) => {
     const entry = keyMap[address];

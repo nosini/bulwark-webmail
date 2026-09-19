@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { checkRecipientKeys, uniqueAddresses, type RecipientKeyStatus } from '@/lib/mailvelope/recipients';
+import { checkRecipientKeys, isLookupCandidate, uniqueAddresses, type RecipientKeyStatus } from '@/lib/mailvelope/recipients';
 import type { MailvelopeKeyring } from '@/lib/mailvelope/types';
 
 const DEBOUNCE_MS = 600;
@@ -38,27 +38,32 @@ export function useRecipientKeyStatus(
 
   useEffect(() => {
     if (!enabled || !keyring) return;
+    // Addresses still being typed are withheld: Mailvelope would resolve them
+    // over WKD or a key server, sending a half-typed address to a third party.
     const unresolved = addressKey
       .split('\n')
-      .filter((address) => address && !cacheRef.current.has(address) && !failedRef.current.has(address));
+      .filter(
+        (address) =>
+          address &&
+          isLookupCandidate(address) &&
+          !cacheRef.current.has(address) &&
+          !failedRef.current.has(address),
+      );
     if (unresolved.length === 0) return;
 
-    let cancelled = false;
     const timer = setTimeout(async () => {
       try {
         const results = await checkRecipientKeys(keyring, unresolved);
-        if (cancelled) return;
+        // Kept even when this run was superseded by an edit to the recipients.
+        // The answers are per address and still true; dropping them meant
+        // looking the same addresses up again.
         for (const status of results) cacheRef.current.set(status.address, status);
       } catch {
-        if (cancelled) return;
         for (const address of unresolved) failedRef.current.add(address);
       }
       setRevision((r) => r + 1);
     }, DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    return () => clearTimeout(timer);
   }, [enabled, keyring, addressKey, revision]);
 
   const refresh = useCallback((address?: string) => {
@@ -74,9 +79,14 @@ export function useRecipientKeyStatus(
 
   if (!enabled) return { statuses: [], checking: false, failed: [], refresh };
 
-  const statuses = addresses.flatMap((address) => {
+  const statuses = addresses.flatMap((address): RecipientKeyStatus[] => {
     const status = cacheRef.current.get(address);
-    return status ? [status] : [];
+    if (status) return [status];
+    // Never looked up, so answer from what we know: a half-typed address has
+    // no key. Without this the composer would sit on "Checking recipient
+    // keys…" for as long as the unfinished address is in the field.
+    if (!isLookupCandidate(address)) return [{ address, state: 'missing', keys: [] }];
+    return [];
   });
   const failed = addresses.filter((address) => failedRef.current.has(address));
   return { statuses, checking: statuses.length + failed.length < addresses.length, failed, refresh };
