@@ -8,7 +8,11 @@ import { createMailvelopeHost } from './mailvelope-host';
 interface MailvelopeEditorProps {
   /** Sign in addition to encrypting. Fixed for the editor's lifetime: change it and the editor restarts. */
   signMsg: boolean;
-  /** Text the editor starts with (a reply's quote, what was typed before encrypting). Read once. */
+  /**
+   * Text the editor starts with (a reply's quote, what was typed before
+   * encrypting). Read whenever the editor starts, not just on mount: changing
+   * it does not restart the editor, but a restart picks up the current value.
+   */
   initialText?: string;
   /** Called with the editor handle when ready, and with null when it goes away. */
   onEditor: (editor: MailvelopeEditorHandle | null) => void;
@@ -25,7 +29,13 @@ export function MailvelopeEditor({ signMsg, initialText, onEditor, onError }: Ma
   const keyring = useMailvelopeStore((s) => s.keyring);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Kept in a ref so it never restarts the editor on its own, but assigned on
+  // every render so a restart (a signMsg toggle) uses the current value. Held
+  // at mount time instead, toggling signing re-inserted the text the user had
+  // carried in when encryption was first switched on, even though the confirm
+  // dialog says what is in the editor is discarded.
   const initialTextRef = useRef(initialText);
+  initialTextRef.current = initialText;
   const onEditorRef = useRef(onEditor);
   onEditorRef.current = onEditor;
   const onErrorRef = useRef(onError);
