@@ -2005,6 +2005,9 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
               const restored = await cancelUndoSend(undoClient, pending);
               if (restored && !pending.isSmime) {
                 await handleEditDraft(restored);
+              } else if (pending.isPgp) {
+                // The composer cannot reopen ciphertext, so say where it went.
+                toast.success(t('pgp.undo_kept_draft'));
               }
               if (isScheduledView) await fetchScheduledEmails(client);
             } catch (error) {

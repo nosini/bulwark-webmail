@@ -3678,6 +3678,7 @@
     "editor_not_ready": "The encrypted editor is still loading.",
     "send_blocked_missing": "No PGP key for: {addresses}",
     "send_blocked_failed": "Recipient keys could not be checked. Use Check again.",
+    "undo_kept_draft": "Sending was stopped. The encrypted message was kept in Drafts.",
     "error_generic": "Encryption failed.",
     "error_no_key_for_recipient": "No PGP key was found for one of the recipients.",
     "error_no_own_key": "You have no private key to sign with. Generate or import one in Mailvelope.",

@@ -31,6 +31,9 @@ type PendingUndoSend = {
   identityId?: string;
   sendAt: string;
   isSmime: boolean;
+  /** PGP/MIME send. Undoing must keep the message: the plaintext only ever
+   *  existed inside the Mailvelope editor, which is unmounted by then. */
+  isPgp?: boolean;
   /** Local account that owns the submission, when the message was sent from
    *  an identity belonging to a non-active account (#461). */
   localAccountId?: string;
@@ -2084,7 +2087,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({
         isLoading: false,
         pendingUndoSend: result.scheduled && result.emailSubmissionId && result.sendAt
-          ? { submissionId: result.emailSubmissionId, emailId: result.emailId, identityId, sendAt: result.sendAt, isSmime: true, submissionAccountId: result.submissionAccountId }
+          ? { submissionId: result.emailSubmissionId, emailId: result.emailId, identityId, sendAt: result.sendAt, isSmime: true, isPgp: options?.isPgp, submissionAccountId: result.submissionAccountId }
           : get().pendingUndoSend,
       });
       return result;
@@ -4878,13 +4881,17 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   cancelUndoSend: async (client, pending) => {
     await client.cancelEmailSubmission(pending.submissionId, pending.submissionAccountId);
-    if (pending.emailId && pending.isSmime) {
+    if (pending.emailId && pending.isSmime && !pending.isPgp) {
       await client.deleteEmail(pending.emailId);
       set(state => ({
         selectedEmail: state.selectedEmail?.id === pending.emailId ? null : state.selectedEmail,
         selectedEmailIds: new Set(Array.from(state.selectedEmailIds).filter(id => id !== pending.emailId)),
       }));
     } else if (pending.emailId) {
+      // PGP/MIME lands here too. Its ciphertext is the only copy of the message
+      // once the Mailvelope editor is unmounted, so undo keeps it in Drafts
+      // rather than deleting it. The composer cannot reopen it, so unlike a
+      // plain undo this returns null and the message stays in Drafts.
       const mailboxes = get().mailboxes.length > 0 ? get().mailboxes : await client.getMailboxes();
       const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts');
       const sentMailbox = mailboxes.find(mb => mb.role === 'sent');

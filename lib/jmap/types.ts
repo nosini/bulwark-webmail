@@ -107,6 +107,12 @@ export interface RawSendOptions {
    * To/Cc/Bcc headers.
    */
   forceEnvelope?: boolean;
+  /**
+   * The raw message is PGP/MIME. Read by the store, not the client: undo-send
+   * must not delete the only copy, because the plaintext lives solely inside
+   * the Mailvelope editor and is gone once the composer closes.
+   */
+  isPgp?: boolean;
 }
 
 export interface SendEmailResult {

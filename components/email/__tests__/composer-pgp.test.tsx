@@ -425,7 +425,8 @@ describe('sending', () => {
     expect(identityId).toBe('id-me');
     expect(delayedUntil).toBeUndefined();
     expect(envelope).toEqual(['bob@example.com']);
-    expect(options).toEqual({ forceEnvelope: true });
+    // isPgp keeps undo-send from deleting the only copy of the message.
+    expect(options).toEqual({ forceEnvelope: true, isPgp: true });
 
     const raw = await readBlob(blob as Blob);
     expect(raw).toContain('Content-Type: multipart/encrypted');

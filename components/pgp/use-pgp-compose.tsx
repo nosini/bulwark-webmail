@@ -215,7 +215,7 @@ export function usePgpCompose(options: UsePgpComposeOptions) {
         const blob = new Blob([raw], { type: 'message/rfc822' });
         return await useEmailStore
           .getState()
-          .sendRawEmail(params.client, blob, params.identityId, params.delayedUntil, envelopeRecipients, { forceEnvelope: true });
+          .sendRawEmail(params.client, blob, params.identityId, params.delayedUntil, envelopeRecipients, { forceEnvelope: true, isPgp: true });
       } catch (err) {
         // Mailvelope errors carry a code; anything else (network, server) is shown as is.
         if ((err as { code?: string } | undefined)?.code) throw new Error(t(pgpErrorMessageKey(err)));
