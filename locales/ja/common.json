@@ -741,7 +741,10 @@
       "background_color": "背景色",
       "remove_background_color": "背景色を削除"
     },
-    "send_filing_warning": "送信されましたが、送信後の整理に失敗しました。古い下書きが残る場合があります。"
+    "send_filing_warning": "送信されましたが、送信後の整理に失敗しました。古い下書きが残る場合があります。",
+    "pgp_attachments_blocked": "Attach files inside the encrypted editor. Files added here would be uploaded unencrypted.",
+    "close_pgp_message": "Encrypted messages are never saved to the server. Closing discards this message.",
+    "pgp_no_identity": "Cannot send an encrypted message without a sender identity."
   },
   "confirm_dialog": {
     "confirm": "確認",
@@ -923,7 +926,8 @@
       "downloads": "ダウンロード",
       "content_senders": "コンテンツと送信者",
       "about_data": "情報とデータ",
-      "debug": "デバッグ"
+      "debug": "デバッグ",
+      "pgp": "PGP encryption"
     },
     "tab_groups": {
       "general": "一般",
@@ -2186,6 +2190,20 @@
     "scoped": {
       "back": "自分のアカウントに戻る",
       "managing": "管理中: {name}"
+    },
+    "pgp": {
+      "title": "PGP encryption",
+      "description": "Read and send PGP-encrypted mail with the Mailvelope browser extension. Your keys and passphrases stay inside the extension: Bulwark never sees them.",
+      "status_connected": "Mailvelope {version} is connected.",
+      "status_connected_no_version": "Mailvelope is connected.",
+      "keys_title": "Your keys",
+      "keys_description": "Generate, import and manage keys here. Messages are encrypted with your contacts' public keys and decrypted with your private key, both inside Mailvelope.",
+      "keys_loading": "Loading the key manager…",
+      "keys_embed_failed": "The embedded key manager could not be loaded.",
+      "open_settings": "Open Mailvelope key settings",
+      "open_settings_failed": "Could not open the Mailvelope settings.",
+      "limits_title": "What is and is not encrypted",
+      "limits_body": "The subject, sender, recipients and date stay readable, as in every PGP/MIME message. Encrypted messages are never saved as drafts on the server. Signing without encrypting is not available through Mailvelope."
     }
   },
   "errors": {
@@ -3619,5 +3637,56 @@
     "preview_empty": "プレビューする結果を選択してください",
     "open_full": "開く",
     "view_label": "表示"
+  },
+  "pgp": {
+    "encrypt_on": "PGP encryption is on. Click to turn it off",
+    "encrypt_off": "Encrypt with PGP (Mailvelope)",
+    "sign_on": "Signing is on. Click to encrypt without signing",
+    "sign_off": "Also sign with your PGP key",
+    "banner_title": "This message will be encrypted with PGP",
+    "banner_title_signed": "This message will be encrypted and signed with PGP",
+    "banner_cleartext_notice": "The subject, sender and recipients are not encrypted.",
+    "banner_drafts_notice": "Nothing is saved to the server while PGP is on, so closing discards the message.",
+    "banner_attachments_notice": "Attach files with the button inside the encrypted editor.",
+    "recipients_label": "Recipient keys",
+    "recipient_ready": "Key found",
+    "recipient_importable": "Key found online, not imported yet",
+    "recipient_missing": "No PGP key found",
+    "recipient_lookup_failed": "Key lookup failed",
+    "recipients_checking": "Checking recipient keys…",
+    "send_blocked_hint": "Sending is blocked until every recipient has a key. Import their public key in Mailvelope, or remove them.",
+    "manage_keys": "Manage keys",
+    "check_again": "Check again",
+    "import_key": "Import key",
+    "import_done": "Key imported.",
+    "import_rejected": "Key import was declined.",
+    "import_failed": "Could not import the key.",
+    "enable_blocked_attachments": "Remove the attachments before encrypting. Files added here are uploaded unencrypted; use the attach button inside the encrypted editor instead.",
+    "enable_draft_title": "Delete the saved draft?",
+    "enable_draft_message": "This draft is stored on the server as plain text. Turning on encryption deletes it from the server. The text you have typed moves into the encrypted editor.",
+    "enable_confirm": "Delete draft and encrypt",
+    "enable_draft_failed": "Could not delete the saved draft, so encryption was not turned on.",
+    "disable_title": "Turn off PGP encryption?",
+    "disable_message": "The text in the encrypted editor cannot be carried back and will be discarded.",
+    "disable_confirm": "Turn off and discard",
+    "sign_switch_title": "Restart the encrypted editor?",
+    "sign_switch_message": "Signing is fixed when the editor starts. Switching restarts it and discards what you have typed in it.",
+    "sign_switch_confirm": "Switch and discard",
+    "editor_failed": "Could not start the encrypted editor: {message}",
+    "editor_failed_short": "The encrypted editor could not be started.",
+    "editor_not_ready": "The encrypted editor is still loading.",
+    "send_blocked_missing": "No PGP key for: {addresses}",
+    "send_blocked_failed": "Recipient keys could not be checked. Use Check again.",
+    "error_generic": "Encryption failed.",
+    "error_no_key_for_recipient": "No PGP key was found for one of the recipients.",
+    "error_no_own_key": "You have no private key to sign with. Generate or import one in Mailvelope.",
+    "error_quota": "The message is too large to encrypt.",
+    "error_in_progress": "Encryption is already in progress.",
+    "error_cancelled": "Encryption was cancelled.",
+    "error_disconnected": "The connection to Mailvelope was lost. Reload the page and try again.",
+    "display_loading": "Decrypting with Mailvelope…",
+    "display_failed": "This message could not be opened with Mailvelope.",
+    "display_note": "Decrypted by Mailvelope. The signature status is shown inside the message frame.",
+    "display_show_original": "Show original"
   }
 }
