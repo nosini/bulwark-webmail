@@ -16,14 +16,23 @@ name: Release Lite (branch build)
 #      give a tag. GitHub only lists a workflow_dispatch workflow when the file is
 #      on the default branch, so for a feature branch use option 1.
 #
-# Assets on the release (both built from the same commit):
-#   bulwark-lite-stalwart.zip      Stalwart Application bundle, fixed name
-#   bulwark-lite-<tag>.zip         static-host bundle
-#   SHA256SUMS
+# Every run publishes TWO releases from the same commit:
 #
-# Point a Stalwart Application at the PINNED url, not releases/latest, because
-# releases from here are prereleases and "latest" never selects those:
-#   https://github.com/<owner>/<repo>/releases/download/<tag>/bulwark-lite-stalwart.zip
+#   <tag>         immutable. Assets: bulwark-lite-stalwart.zip, bulwark-lite-<tag>.zip,
+#                 SHA256SUMS. Pin this when you want a build that never changes.
+#   lite-latest   rolling. The tag is force-moved to each new build, so its asset urls
+#                 are stable and always serve the newest bundle. Assets use fixed
+#                 names: bulwark-lite-stalwart.zip, bulwark-lite-static.zip, SHA256SUMS.
+#
+# For a Stalwart Application that follows new builds, use the rolling url:
+#   https://github.com/<owner>/<repo>/releases/download/lite-latest/bulwark-lite-stalwart.zip
+# A stable url is only half of it: Stalwart caches the bundle for
+# `autoUpdateFrequency` and only refetches at startup once that has elapsed, or
+# immediately whenever the `UpdateApps` action runs. See docs/lite-branch-releases.md
+# for the server side.
+#
+# Releases here are prereleases, so `releases/latest/...` never selects them; use
+# the explicit tag urls above.
 #
 # Pushing with the default GITHUB_TOKEN does not trigger other workflows, so the
 # release created here does not make static-lite.yml run. It would if you create
@@ -45,6 +54,10 @@ on:
         description: "Run typecheck and the vitest suite before building"
         type: boolean
         default: true
+      rolling_tag:
+        description: "Rolling tag to move to this build so Stalwart can follow it. Empty to publish only the pinned release."
+        required: false
+        default: "lite-latest"
       app_name:
         description: "App name baked into config.json"
         required: false
@@ -58,6 +71,10 @@ on:
       base_path:
         description: "Sub-path mount for the static bundle, e.g. /webmail (the stalwart bundle detects its prefix at runtime)"
         required: false
+
+# Tag pushes carry no inputs, so the rolling tag comes from here for those runs.
+env:
+  ROLLING_TAG_DEFAULT: lite-latest
 
 # Two runs for the same tag would race on the same release.
 concurrency:
@@ -78,6 +95,7 @@ jobs:
       tag: ${{ steps.m.outputs.tag }}
       suffix: ${{ steps.m.outputs.suffix }}
       prerelease: ${{ steps.m.outputs.prerelease }}
+      rolling: ${{ steps.m.outputs.rolling }}
     steps:
       - name: Validate the tag
         id: m
@@ -87,14 +105,17 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_ROLLING: ${{ inputs.rolling_tag }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "push" ]; then
             TAG="$REF_NAME"
             PRERELEASE=true          # tag pushes from a branch are always prereleases
+            ROLLING="$ROLLING_TAG_DEFAULT"
           else
             TAG="$INPUT_TAG"
             PRERELEASE="$INPUT_PRERELEASE"
+            ROLLING="$INPUT_ROLLING"
           fi
           # The lite- prefix keeps these apart from upstream-style v* releases, which
           # static-lite.yml treats as its own.
@@ -102,10 +123,23 @@ jobs:
             echo "::error::Release tag must match ^lite-[A-Za-z0-9._-]+$ (got: $TAG)"
             exit 1
           fi
+          # Same grammar as the pinned tag. Empty means "pinned release only".
+          if [ -n "$ROLLING" ]; then
+            if ! [[ "$ROLLING" =~ ^lite-[A-Za-z0-9._-]+$ ]]; then
+              echo "::error::Rolling tag must match ^lite-[A-Za-z0-9._-]+$ (got: $ROLLING)"
+              exit 1
+            fi
+            if [ "$ROLLING" = "$TAG" ]; then
+              # Moving and pinning the same tag would fight over one release.
+              echo "::notice::Rolling tag equals the release tag ($TAG); publishing the pinned release only."
+              ROLLING=""
+            fi
+          fi
           {
             echo "tag=$TAG"
             echo "suffix=${TAG#lite-}"
             echo "prerelease=$PRERELEASE"
+            echo "rolling=$ROLLING"
           } >> "$GITHUB_OUTPUT"
 
   verify:
@@ -201,7 +235,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.meta.outputs.tag }}
+      SUFFIX: ${{ needs.meta.outputs.suffix }}
       PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+      ROLLING: ${{ needs.meta.outputs.rolling }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -250,6 +286,15 @@ jobs:
           Checksums are in \`SHA256SUMS\`.
           EOF
 
+          # Only advertise the rolling release when this run actually publishes one.
+          if [ -n "${ROLLING:-}" ]; then
+            cat >> notes.md <<EOF
+
+          This release is immutable. To follow new builds instead of pinning this one,
+          use the urls on the \`${ROLLING}\` release.
+          EOF
+          fi
+
       - name: Create or update the release
         run: |
           set -euo pipefail
@@ -265,3 +310,53 @@ jobs:
               --prerelease="$PRERELEASE"
           fi
           echo "Release: https://github.com/${GH_REPO}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the rolling release
+        # Gives Stalwart a url that does not change between builds.
+        if: needs.meta.outputs.rolling != ''
+        run: |
+          set -euo pipefail
+          # Fixed asset names: the urls stay valid and old builds cannot pile up,
+          # because --clobber overwrites the same three files every time.
+          mkdir -p rolling
+          cp "dist/bulwark-lite-stalwart.zip" rolling/bulwark-lite-stalwart.zip
+          cp "dist/bulwark-lite-${SUFFIX}.zip" rolling/bulwark-lite-static.zip
+          (cd rolling && sha256sum *.zip > SHA256SUMS)
+
+          # Move the tag to this build. This job has no checkout, so use the refs API.
+          if gh api "repos/${GH_REPO}/git/ref/tags/${ROLLING}" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${ROLLING}" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/${GH_REPO}/git/refs" \
+              -f ref="refs/tags/${ROLLING}" -f sha="$GITHUB_SHA" >/dev/null
+          fi
+
+          cat > rolling-notes.md <<EOF
+          Rolling build: this tag moves to every new Lite build, so these urls always
+          serve the newest bundle. Currently \`${GITHUB_SHA::7}\` (pinned as \`${TAG}\`).
+
+          **Stalwart Application** \`resourceUrl\`:
+
+          \`\`\`
+          https://github.com/${GH_REPO}/releases/download/${ROLLING}/bulwark-lite-stalwart.zip
+          \`\`\`
+
+          Stalwart caches the bundle for \`autoUpdateFrequency\` and refetches at startup
+          once that elapses, or immediately when the \`UpdateApps\` action runs.
+
+          **Static host**: \`bulwark-lite-static.zip\`.
+          EOF
+
+          # The release is attached to the tag, which now points at this commit.
+          if gh release view "$ROLLING" >/dev/null 2>&1; then
+            gh release upload "$ROLLING" rolling/* --clobber
+            gh release edit "$ROLLING" --notes-file rolling-notes.md --prerelease=true
+          else
+            gh release create "$ROLLING" rolling/* \
+              --title "Bulwark Lite (rolling)" \
+              --notes-file rolling-notes.md \
+              --target "$GITHUB_SHA" \
+              --prerelease=true
+          fi
+          echo "Rolling: https://github.com/${GH_REPO}/releases/tag/${ROLLING}" >> "$GITHUB_STEP_SUMMARY"
