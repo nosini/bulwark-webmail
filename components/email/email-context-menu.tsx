@@ -209,7 +209,7 @@ export function EmailContextMenu({
           />
           <ContextMenuItem
             icon={EditIcon}
-            label={email.isSmimeScheduled ? t("cancel_and_compose_again") : t("cancel_and_edit")}
+            label={email.isSmimeScheduled || email.isPgpScheduled ? t("cancel_and_compose_again") : t("cancel_and_edit")}
             onClick={() => handleAction(onCancelScheduledForEdit!)}
             disabled={!onCancelScheduledForEdit}
           />

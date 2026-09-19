@@ -3073,9 +3073,9 @@ export function EmailViewer({
               <CalendarClock className="w-4 h-4" />
               {showToolbarLabels && <span className="hidden sm:inline text-sm">{t('reschedule_send')}</span>}
             </Button>
-            <Button variant="ghost" size="sm" onClick={onCancelScheduledForEdit} className="hidden sm:flex sm:h-8 sm:gap-1.5 sm:py-0" title={email.isSmimeScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}>
+            <Button variant="ghost" size="sm" onClick={onCancelScheduledForEdit} className="hidden sm:flex sm:h-8 sm:gap-1.5 sm:py-0" title={email.isSmimeScheduled || email.isPgpScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}>
               <EditIcon className="w-4 h-4" />
-              {showToolbarLabels && <span className="hidden sm:inline text-sm">{email.isSmimeScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}</span>}
+              {showToolbarLabels && <span className="hidden sm:inline text-sm">{email.isSmimeScheduled || email.isPgpScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}</span>}
             </Button>
           </>
         )}
@@ -4738,7 +4738,7 @@ export function EmailViewer({
                     </Button>
                     <Button size="sm" variant="outline" onClick={onCancelScheduledForEdit} className="gap-1.5">
                       <EditIcon className="w-3.5 h-3.5" />
-                      {email.isSmimeScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}
+                      {email.isSmimeScheduled || email.isPgpScheduled ? t('cancel_and_compose_again') : t('cancel_and_edit')}
                     </Button>
                   </>
                 )}

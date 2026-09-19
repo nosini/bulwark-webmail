@@ -3348,6 +3348,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
           fullEmail.scheduledUndoStatus = listEmail.scheduledUndoStatus;
           fullEmail.isScheduled = true;
           fullEmail.isSmimeScheduled = listEmail.isSmimeScheduled;
+          fullEmail.isPgpScheduled = listEmail.isPgpScheduled;
         }
         // Re-stamp the source reference so later actions on the open email
         // resolve to the right account (the fetched object lacks these).
@@ -3994,7 +3995,9 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
                 onCancelScheduledForEdit={async (email) => {
                   if (!client) return;
                   const restored = await cancelScheduledEmailForEdit(client, email);
-                  if (email.isSmimeScheduled) {
+                  if (email.isSmimeScheduled || email.isPgpScheduled) {
+                    // Neither can be reopened for editing; start a fresh message.
+                    if (email.isPgpScheduled) toast.success(t('pgp.undo_kept_draft'));
                     setComposerMode('compose');
                     setPendingDraft(null);
                   } else if (restored) {
@@ -4325,7 +4328,9 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
                     onCancelScheduledForEdit={async () => {
                       if (!client || !selectedEmail) return;
                       const restored = await cancelScheduledEmailForEdit(client, selectedEmail);
-                      if (selectedEmail.isSmimeScheduled) {
+                      if (selectedEmail.isSmimeScheduled || selectedEmail.isPgpScheduled) {
+                        // Neither can be reopened for editing; start a fresh message.
+                        if (selectedEmail.isPgpScheduled) toast.success(t('pgp.undo_kept_draft'));
                         setComposerMode('compose');
                         setShowComposer(true);
                         return;

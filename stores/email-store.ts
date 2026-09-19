@@ -4847,6 +4847,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       await client.restoreEmailToDraft(email.id, draftsMailbox.originalId || draftsMailbox.id, sentMailbox?.originalId || sentMailbox?.id);
     }
     await get().fetchScheduledEmails(client);
+    // A PGP message is kept, like an undone PGP send, but never handed back:
+    // the composer would show an empty body for it and send that as plaintext.
+    if (email.isPgpScheduled) return null;
     const restored = await client.getEmail(email.id);
     return restored;
   },

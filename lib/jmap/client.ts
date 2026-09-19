@@ -16,6 +16,7 @@ import { sanitizeDisplayName, splitMailbox } from "@/lib/rfc5322-mailbox";
 import { decodeFileNodeName } from "./filenode-name";
 import { getEffectiveTimeZone } from "@/lib/timezone";
 import { buildEmailSort, compareEmails, hasKeywordLevels, type KeywordSortPolarity, type SortLevel } from "@/lib/message-list-order";
+import { detectPgpMessage } from "@/lib/mailvelope/detect";
 
 // Cap for the follow-up Email/get issued when a displayed body part comes
 // back truncated at the normal 256000-byte limit (see refetchTruncatedBodyValues
@@ -8574,6 +8575,7 @@ export class JMAPClient implements IJMAPClient {
           scheduledAccountId: accountBySubmissionId.get(submission.id),
           isScheduled: true,
           isSmimeScheduled: isSmimeEmail(email),
+          isPgpScheduled: detectPgpMessage(email) !== null,
         };
       })
       .filter((email): email is ScheduledEmail => email !== null)

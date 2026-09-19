@@ -97,6 +97,13 @@ export interface Email {
   scheduledAccountId?: string;
   isScheduled?: boolean;
   isSmimeScheduled?: boolean;
+  /**
+   * Scheduled message the composer cannot reconstruct (PGP/MIME or inline
+   * PGP): the plaintext never left the Mailvelope editor. Cancelling for edit
+   * must not hand the ciphertext to the composer, which would present an empty
+   * body that sends as plaintext.
+   */
+  isPgpScheduled?: boolean;
 }
 
 /** Options for JMAPClient.sendRawEmail beyond the message itself. */
