@@ -8290,9 +8290,9 @@ export class JMAPClient implements IJMAPClient {
     // derives the recipients from the To/Cc/Bcc headers. A caller that keeps a
     // recipient out of the headers (PGP/MIME never writes Bcc) must not depend on that.
     const envelope = options?.forceEnvelope && envelopeRecipients?.length
-      ? (createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients)
+      ? (createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients, options)
         ?? { mailFrom: { email: mailFrom }, rcptTo: normalizeEnvelopeRecipients(envelopeRecipients) })
-      : createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients);
+      : createDelayedSubmissionEnvelope(mailFrom, holdForSeconds, envelopeRecipients, options);
 
     const methodCalls: [string, Record<string, unknown>, string][] = [
       ['Email/import', {

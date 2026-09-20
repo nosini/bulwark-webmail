@@ -185,17 +185,23 @@ vi.mock('@/stores/toast-store', () => ({
   toast: { info: () => {}, error: () => {}, success: () => {} },
 }));
 
-const hooks = vi.hoisted(() => ({ onDraftChange: vi.fn() }));
+vi.mock('@/lib/plugin-storage', () => ({ fileStorage: { saveFile: async () => {}, getFile: async () => null, deleteFile: async () => {} } }));
+
+const hooks = vi.hoisted(() => ({ onDraftChange: vi.fn(), onBeforeEmailSend: vi.fn(), onBeforeAttachmentUpload: vi.fn() }));
 
 vi.mock('@/lib/plugin-hooks', () => ({
+  isExternalAttachmentResult: () => false,
   emailHooks: {
+    onBeforeAttachmentUpload: { intercept: (...args: unknown[]) => hooks.onBeforeAttachmentUpload(...args) },
+    onBeforeBlobUpload: { transform: async (value: unknown) => value },
+    onAfterAttachmentUpload: { emit: () => {} },
     onComposerOpen: { call: async () => [] },
     onRecipientChange: { call: async () => [] },
     getRecipientSuggestions: { call: async () => [] },
     onRecipientChipsChange: { transform: async (chips: unknown) => chips },
     onDraftChange: { emit: (...args: unknown[]) => hooks.onDraftChange(...args) },
     onBeforeDraftAutoSave: { transform: async (draft: unknown) => draft },
-    onBeforeEmailSend: { intercept: async () => true },
+    onBeforeEmailSend: { intercept: (...args: unknown[]) => hooks.onBeforeEmailSend(...args) },
     onComposeSend: { intercept: async () => true },
     onTransformOutgoingEmail: { transform: async (email: unknown) => email },
   },
@@ -264,6 +270,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeEach(() => {
   cleanup();
+  hooks.onBeforeEmailSend.mockReset().mockResolvedValue(true);
+  hooks.onBeforeAttachmentUpload.mockReset().mockResolvedValue(true);
   mv.available = true;
   mv.hasKey = () => true;
   mv.encrypt.mockReset().mockResolvedValue(ARMOR);
@@ -564,5 +572,81 @@ describe('extension disconnect mid-compose', () => {
     expect(sendButton()).toBeDisabled();
     // The user can still leave PGP mode.
     expect(pgpToggle()).toBeInTheDocument();
+  });
+});
+
+describe('additional review reproductions', () => {
+  it('preserves REQUIRETLS on the encrypted send', async () => {
+    useAuthStore.setState({ client: { createDraft, deleteEmail, uploadBlob,
+      hasDelayedSend: () => false, getMaxDelayedSend: () => 0,
+      supportsSubmissionExtension: () => true } as never });
+    const onSend = vi.fn();
+    render(<EmailComposer initialData={DRAFT} pgpSupported onSend={onSend} />);
+    await enablePgp();
+    fireEvent.click(screen.getByTestId('composer-require-tls-toggle'));
+    expect(screen.getByTestId('composer-require-tls-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(sendButton()).not.toBeDisabled(), { timeout: 3000 });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    const data = onSend.mock.calls[0][0];
+    expect(data.requireTls).toBe(true);
+    await data.rawSend();
+    expect(mv.sendRawEmail.mock.calls[0][5]).toEqual({ forceEnvelope: true, isPgp: true, requireTls: true });
+  });
+
+  it('keeps PGP subject and Bcc out of plugin send hooks', async () => {
+    hooks.onBeforeEmailSend.mockClear();
+    const onSend = vi.fn();
+    render(<EmailComposer initialData={{ ...DRAFT, subject: 'Confidential acquisition', bcc: 'hidden@example.net', showBcc: true }} pgpSupported onSend={onSend} />);
+    await enablePgp();
+    await waitFor(() => expect(sendButton()).not.toBeDisabled(), { timeout: 3000 });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    expect(hooks.onBeforeEmailSend).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('additional upload race reproduction', () => {
+  it('blocks PGP while a plaintext upload awaits plugin approval', async () => {
+    let release!: (allowed: boolean) => void;
+    hooks.onBeforeAttachmentUpload.mockReturnValue(new Promise<boolean>(r => { release = r; }));
+    const view = render(<EmailComposer initialData={DRAFT} pgpSupported onSend={vi.fn()} />);
+    const input = view.container.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [new File(['secret contents'], 'secret.txt', { type: 'text/plain' })] } });
+    await waitFor(() => expect(hooks.onBeforeAttachmentUpload).toHaveBeenCalled());
+    fireEvent.click(pgpToggle());
+    expect(screen.queryByTestId('pgp-editor')).not.toBeInTheDocument();
+    expect(uploadBlob).not.toHaveBeenCalled();
+    await React.act(async () => release(true));
+    await waitFor(() => expect(uploadBlob).toHaveBeenCalledTimes(1));
+    expect(uploadBlob.mock.calls[0][0].name).toBe('secret.txt');
+  });
+});
+
+
+describe('PGP guard lifecycle', () => {
+  it('allows encryption after a pending upload is vetoed', async () => {
+    let release!: (allowed: boolean) => void;
+    hooks.onBeforeAttachmentUpload.mockReturnValue(new Promise<boolean>(resolve => { release = resolve; }));
+    const view = render(<EmailComposer initialData={DRAFT} pgpSupported />);
+    fireEvent.change(view.container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['secret'], 'secret.txt')] },
+    });
+    await waitFor(() => expect(hooks.onBeforeAttachmentUpload).toHaveBeenCalled());
+    fireEvent.click(pgpToggle());
+    expect(screen.queryByTestId('pgp-editor')).not.toBeInTheDocument();
+    await React.act(async () => release(false));
+    await enablePgp();
+    expect(uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('still lets a plugin veto an ordinary unencrypted send', async () => {
+    hooks.onBeforeEmailSend.mockResolvedValue(false);
+    const onSend = vi.fn();
+    render(<EmailComposer initialData={DRAFT} pgpSupported onSend={onSend} />);
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(hooks.onBeforeEmailSend).toHaveBeenCalled());
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

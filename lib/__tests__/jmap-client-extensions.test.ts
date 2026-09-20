@@ -80,6 +80,27 @@ describe('JMAP client extensions', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([true, false])('raw send preserves REQUIRETLS=%s and Bcc envelope recipients', async (requireTls) => {
+    await setup();
+    vi.spyOn(client, 'uploadBlob').mockResolvedValue({ blobId: 'ciphertext', type: 'message/rfc822', size: 10 });
+    vi.spyOn(client, 'getIdentities').mockResolvedValue([{ id: 'identity', email: 'sender@example.com', name: 'Sender', mayDelete: false }]);
+    answer(() => ({ methodResponses: [
+      ['Email/import', { created: { 'raw-import': { id: 'email' } } }, '0'],
+      ['EmailSubmission/set', { created: { 'raw-submit': { id: 'submission' } } }, '1'],
+    ] }));
+
+    await client.sendRawEmail(new Blob(['ciphertext']), 'identity', 'sent', 'drafts', undefined,
+      ['visible@example.com', 'hidden@example.com'], { forceEnvelope: true, isPgp: true, requireTls });
+
+    const submission = requests[0].methodCalls.find(([method]) => method === 'EmailSubmission/set')![1];
+    expect(submission).toMatchObject({ create: { 'raw-submit': { envelope: {
+      mailFrom: requireTls
+        ? { email: 'sender@example.com', parameters: { REQUIRETLS: null } }
+        : { email: 'sender@example.com' },
+      rcptTo: [{ email: 'visible@example.com' }, { email: 'hidden@example.com' }],
+    } } } });
+  });
+
   describe('delta sync', () => {
     it('maps Email/changes and passes sinceState / maxChanges', async () => {
       await setup();

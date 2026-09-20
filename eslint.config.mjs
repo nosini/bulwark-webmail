@@ -81,6 +81,8 @@ export default [
       ".next/**",
       "node_modules/**",
       "repos/**",
+      // Upstream Mailvelope checkout used for API reference, maintained separately.
+      "mailvelope/**",
       "data/admin/plugins/**",
       "public/**/*.js",
       "*.config.js",

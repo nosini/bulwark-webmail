@@ -108,6 +108,8 @@ export interface Email {
 
 /** Options for JMAPClient.sendRawEmail beyond the message itself. */
 export interface RawSendOptions {
+  /** Require encrypted transport on every delivery hop. */
+  requireTls?: boolean;
   /**
    * Always submit with an explicit envelope built from the envelope
    * recipients, instead of letting the server derive it from the message's

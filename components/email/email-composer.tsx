@@ -717,13 +717,16 @@ export function EmailComposer({
   // PGP/MIME via the Mailvelope extension. While it is on, nothing typed may
   // reach the server (drafts, attachments): see pgp.activeRef in saveDraftOnce
   // and addFiles.
+  const pendingAttachmentUploadsRef = useRef(0);
   const pgp = usePgpCompose({
     recipients: [
       ...expandRecipients(withInput(to, toInput)),
       ...expandRecipients(withInput(cc, ccInput)),
       ...expandRecipients(withInput(bcc, bccInput)),
     ].map((r) => r.email),
-    hasAttachments: attachments.length > 0,
+    get hasAttachments() {
+      return attachments.length > 0 || pendingAttachmentUploadsRef.current > 0;
+    },
     getPlainText: () => {
       const text = plainTextMode ? body : htmlToPlainText(body);
       return signatureAlreadyInBody
@@ -1492,129 +1495,135 @@ export function EmailComposer({
       return;
     }
 
-    // Let plugins veto each upload before it's queued.
-    const allowedFiles: File[] = [];
-    for (const file of files) {
-      const ok = await emailHooks.onBeforeAttachmentUpload.intercept({
-        name: file.name,
-        type: file.type || 'application/octet-stream',
-        size: file.size,
-      });
-      if (ok) allowedFiles.push(file);
-    }
-    if (allowedFiles.length === 0) return;
-    files = allowedFiles;
+    // Include plugin approval time, before an attachment chip exists.
+    pendingAttachmentUploadsRef.current++;
+    try {
+      // Let plugins veto each upload before it's queued.
+      const allowedFiles: File[] = [];
+      for (const file of files) {
+        const ok = await emailHooks.onBeforeAttachmentUpload.intercept({
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+        });
+        if (ok) allowedFiles.push(file);
+      }
+      if (allowedFiles.length === 0) return;
+      files = allowedFiles;
 
-    const newAttachments: ComposerAttachment[] = files.map(file => {
-      const controller = new AbortController();
-      return {
-        file,
-        name: file.name,
-        type: file.type || 'application/octet-stream',
-        size: file.size,
-        uploading: true,
-        abortController: controller,
-      };
-    });
-    setAttachments(prev => [...prev, ...newAttachments]);
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const controller = newAttachments[i].abortController;
-      try {
-        if (controller?.signal.aborted) continue;
-        
-        const fileId = generateUUID();
-        await fileStorage.saveFile(fileId, file);
-
-        // Byte progress for the chip, from whichever transport moves the
-        // bytes: the JMAP client below reports directly, a plugin offloading
-        // via `api.http.post` reports through the staged-file-id registry
-        // (it echoes `fileId` as `progressFileId`, see doHttpPost).
-        const reportProgress = (loaded: number, total: number) => {
-          if (total <= 0 || controller?.signal.aborted) return;
-          const pct = Math.min(100, Math.floor((loaded / total) * 100));
-          setAttachments(prev =>
-            prev.map(att => (att.file === file ? { ...att, progress: pct } : att))
-          );
+      const newAttachments: ComposerAttachment[] = files.map(file => {
+        const controller = new AbortController();
+        return {
+          file,
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+          uploading: true,
+          abortController: controller,
         };
-        const stopProgress = onUploadProgress(fileId, reportProgress);
+      });
+      setAttachments(prev => [...prev, ...newAttachments]);
 
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const controller = newAttachments[i].abortController;
         try {
-          const transformed = await emailHooks.onBeforeBlobUpload.transform<unknown>(fileId);
-
-          // A handler can offload the file elsewhere and hand back replacement
-          // content instead of a file id. Drop the binary attachment and put the
-          // replacement in the body.
-          if (isExternalAttachmentResult(transformed)) {
-            // `transformed.fileId` when the handler re-saved the staged file
-            // under a new id; otherwise the id we handed it.
-            await fileStorage.deleteFile(transformed.fileId ?? fileId);
-            // The user may have removed the attachment while the handler was
-            // offloading it - don't drop a link for a file they cancelled.
-            if (controller?.signal.aborted) continue;
-            setAttachments(prev => prev.filter(att => att.file !== file));
-            if (plainTextMode) {
-              setBody(previous =>
-                previous && !previous.endsWith('\n') ? `${previous}\n${transformed.text}` : previous + transformed.text
-              );
-            } else {
-              // Never trust plugin markup in the document (or in the message the
-              // user then sends); insert through the editor so it lands at the
-              // caret rather than after the signature and quoted block.
-              const html = sanitizePluginBodyHtml(transformed.html);
-              if (!html) continue;
-              if (editorRef.current) {
-                editorRef.current.chain().focus().insertContent(html).run();
-              } else {
-                setBody(previous => previous + html);
-              }
-            }
-            continue;
-          }
-
-          const newFileId = typeof transformed === 'string' ? transformed : fileId;
-
-          const newFile = await fileStorage.getFile(newFileId) || file;
-          await fileStorage.deleteFile(newFileId);
-
-          // Passing the signal also makes cancel abort the transfer itself,
-          // instead of only being checked once the upload has finished.
-          const { blobId } = await (composerClientRef.current ?? client).uploadBlob(newFile, {
-            onProgress: reportProgress,
-            signal: controller?.signal,
-          });
-
           if (controller?.signal.aborted) continue;
+
+          const fileId = generateUUID();
+          await fileStorage.saveFile(fileId, file);
+
+          // Byte progress for the chip, from whichever transport moves the
+          // bytes: the JMAP client below reports directly, a plugin offloading
+          // via `api.http.post` reports through the staged-file-id registry
+          // (it echoes `fileId` as `progressFileId`, see doHttpPost).
+          const reportProgress = (loaded: number, total: number) => {
+            if (total <= 0 || controller?.signal.aborted) return;
+            const pct = Math.min(100, Math.floor((loaded / total) * 100));
+            setAttachments(prev =>
+              prev.map(att => (att.file === file ? { ...att, progress: pct } : att))
+            );
+          };
+          const stopProgress = onUploadProgress(fileId, reportProgress);
+
+          try {
+            const transformed = await emailHooks.onBeforeBlobUpload.transform<unknown>(fileId);
+
+            // A handler can offload the file elsewhere and hand back replacement
+            // content instead of a file id. Drop the binary attachment and put the
+            // replacement in the body.
+            if (isExternalAttachmentResult(transformed)) {
+              // `transformed.fileId` when the handler re-saved the staged file
+              // under a new id; otherwise the id we handed it.
+              await fileStorage.deleteFile(transformed.fileId ?? fileId);
+              // The user may have removed the attachment while the handler was
+              // offloading it - don't drop a link for a file they cancelled.
+              if (controller?.signal.aborted) continue;
+              setAttachments(prev => prev.filter(att => att.file !== file));
+              if (plainTextMode) {
+                setBody(previous =>
+                  previous && !previous.endsWith('\n') ? `${previous}\n${transformed.text}` : previous + transformed.text
+                );
+              } else {
+                // Never trust plugin markup in the document (or in the message the
+                // user then sends); insert through the editor so it lands at the
+                // caret rather than after the signature and quoted block.
+                const html = sanitizePluginBodyHtml(transformed.html);
+                if (!html) continue;
+                if (editorRef.current) {
+                  editorRef.current.chain().focus().insertContent(html).run();
+                } else {
+                  setBody(previous => previous + html);
+                }
+              }
+              continue;
+            }
+
+            const newFileId = typeof transformed === 'string' ? transformed : fileId;
+
+            const newFile = await fileStorage.getFile(newFileId) || file;
+            await fileStorage.deleteFile(newFileId);
+
+            // Passing the signal also makes cancel abort the transfer itself,
+            // instead of only being checked once the upload has finished.
+            const { blobId } = await (composerClientRef.current ?? client).uploadBlob(newFile, {
+              onProgress: reportProgress,
+              signal: controller?.signal,
+            });
+
+            if (controller?.signal.aborted) continue;
+            setAttachments(prev =>
+              prev.map(att =>
+                att.file === file
+                  ? { ...att, blobId, uploading: false, abortController: undefined }
+                  : att
+              )
+            );
+            emailHooks.onAfterAttachmentUpload.emit({
+              name: file.name,
+              type: file.type || 'application/octet-stream',
+              size: file.size,
+              blobId,
+            });
+          } finally {
+            stopProgress();
+          }
+        } catch (error) {
+          if (controller?.signal.aborted) continue;
+          debug.error(`Failed to upload ${file.name}:`, error);
+          toast.error(t('upload_failed', { filename: file.name }));
+
           setAttachments(prev =>
             prev.map(att =>
               att.file === file
-                ? { ...att, blobId, uploading: false, abortController: undefined }
+                ? { ...att, uploading: false, error: true, abortController: undefined }
                 : att
             )
           );
-          emailHooks.onAfterAttachmentUpload.emit({
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            size: file.size,
-            blobId,
-          });
-        } finally {
-          stopProgress();
         }
-      } catch (error) {
-        if (controller?.signal.aborted) continue;
-        debug.error(`Failed to upload ${file.name}:`, error);
-        toast.error(t('upload_failed', { filename: file.name }));
-
-        setAttachments(prev =>
-          prev.map(att =>
-            att.file === file
-              ? { ...att, uploading: false, error: true, abortController: undefined }
-              : att
-          )
-        );
       }
+    } finally {
+      pendingAttachmentUploadsRef.current--;
     }
   }, [client, t, plainTextMode, pgpActiveRef]);
 
@@ -2312,7 +2321,7 @@ export function EmailComposer({
           .map(a => ({ name: a.name, type: a.type || 'application/octet-stream', size: a.size })),
         inReplyTo: threadingHeaders?.inReplyTo?.[0],
       };
-      const sendAllowed = await emailHooks.onBeforeEmailSend.intercept(sendablePreview);
+      const sendAllowed = pgp.active || await emailHooks.onBeforeEmailSend.intercept(sendablePreview);
       if (!sendAllowed) {
         // A plugin vetoed the send (it is expected to show its own UI).
         // Leave a trace so a silent no-op send is diagnosable (#592).
@@ -2417,6 +2426,7 @@ export function EmailComposer({
             inReplyTo: threadingHeaders?.inReplyTo,
             references: threadingHeaders?.references,
             delayedUntil: effectiveDelayedUntil,
+            requireTls: requireTls || undefined,
           });
         }
 

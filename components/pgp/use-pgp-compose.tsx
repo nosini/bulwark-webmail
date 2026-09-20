@@ -44,6 +44,7 @@ export interface PgpSendParams {
   inReplyTo?: string[];
   references?: string[];
   delayedUntil?: string;
+  requireTls?: boolean;
 }
 
 type EditorStatus = 'starting' | 'ready' | 'error';
@@ -93,7 +94,12 @@ export function usePgpCompose(options: UsePgpComposeOptions) {
         });
         if (!ok) return;
       }
-      const text = opts.getPlainText();
+      // Attachments may have started while the draft confirmation was open.
+      if (optionsRef.current.hasAttachments) {
+        toast.error(t('enable_blocked_attachments'));
+        return;
+      }
+      const text = optionsRef.current.getPlainText();
       // Block every save first, then remove what is already on the server.
       activeRef.current = true;
       try {
@@ -222,7 +228,7 @@ export function usePgpCompose(options: UsePgpComposeOptions) {
         const blob = new Blob([raw], { type: 'message/rfc822' });
         return await useEmailStore
           .getState()
-          .sendRawEmail(params.client, blob, params.identityId, params.delayedUntil, envelopeRecipients, { forceEnvelope: true, isPgp: true });
+          .sendRawEmail(params.client, blob, params.identityId, params.delayedUntil, envelopeRecipients, { forceEnvelope: true, isPgp: true, ...(params.requireTls ? { requireTls: true } : {}) });
       } catch (err) {
         // Mailvelope errors carry a code, and so do the address ones raised
         // before encrypting; anything else (network, server) is shown as is.
