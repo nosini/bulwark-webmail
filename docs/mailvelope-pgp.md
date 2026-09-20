@@ -55,8 +55,8 @@ not be pinned to one extension id; allow the scheme.
 
 - **Stalwart Application** (`--target=stalwart`): Stalwart sends no CSP for an
   Application, so nothing is needed unless a reverse proxy in front adds one.
-- **Full (Node) build**: `proxy.ts` builds the CSP; this feature does not change
-  it. Add the two schemes to `frame-src` there if you want PGP in that build.
+- **Full (Node) build**: `proxy.ts` builds the CSP and allows the two schemes
+  itself, so nothing is needed unless a reverse proxy in front sets its own.
 
 Without this the frames stay blank.
 

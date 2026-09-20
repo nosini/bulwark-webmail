@@ -267,10 +267,17 @@ export async function proxy(request: NextRequest) {
     frameOrigins.push(origin);
   }
 
+  // Mailvelope (optional PGP support) renders decrypted mail, its editor and
+  // its key manager in iframes served from the extension's own origin. Without
+  // these schemes the extension still announces itself, so the PGP UI appears
+  // and then every container stays blank. Matches the Lite build's _headers.
+  // An extension the user installed can already read and rewrite this page
+  // through its content script, so framing from it grants nothing new.
+  const extensionFrameSrc = "chrome-extension: moz-extension:";
   const frameSrc =
     frameOrigins.length > 0
-      ? `frame-src 'self' blob: ${frameOrigins.join(" ")}`
-      : `frame-src 'self' blob:`;
+      ? `frame-src 'self' blob: ${extensionFrameSrc} ${frameOrigins.join(" ")}`
+      : `frame-src 'self' blob: ${extensionFrameSrc}`;
 
   const csp = [
     `default-src 'self'`,

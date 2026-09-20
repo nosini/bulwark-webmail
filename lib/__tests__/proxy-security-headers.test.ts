@@ -80,6 +80,14 @@ describe('security headers on dotted app paths (GHSA-xvjh-v9c6-qcvc)', () => {
     expect(response.headers.get('x-middleware-request-x-pathname')).toBe(path);
   });
 
+  // Mailvelope's decrypted-mail, editor and key-manager iframes are served
+  // from the extension's own origin. Detection needs no iframe, so without
+  // these schemes the PGP UI appears and then every container stays blank.
+  it('lets the browser extension schemes be framed, so PGP containers render', async () => {
+    const csp = (await load('/en/mail/folder/inbox')).headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("frame-src 'self' blob: chrome-extension: moz-extension:");
+  });
+
   it('gives a dotted app path the same policy as its canonical sibling', async () => {
     const dotted = await load('/en/mail/folder/inbox/statement.pdf');
     const canonical = await load('/en/mail/folder/inbox');
