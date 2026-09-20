@@ -100,6 +100,36 @@ describe('encryptAndBuildMessage', () => {
     expect(raw).not.toMatch(/^bcc:/im);
   });
 
+  // Checking this after encrypting means the user answers the passphrase
+  // dialog, waits, and is then told the message cannot be built.
+  it.each([
+    ['a To address', { to: [{ email: 'jörg@example.org' }] }],
+    ['a Cc address', { cc: [{ email: 'jörg@example.org' }] }],
+    // Bcc reaches no header, so only this check can catch it.
+    ['a Bcc address', { bcc: [{ email: 'jörg@example.org' }] }],
+    ['the sender', { from: { email: 'jörg@example.org' } }],
+  ])('rejects a non-ASCII %s without encrypting', async (_label, override) => {
+    const ed = editor(ARMOR);
+    await expect(encryptAndBuildMessage({ ...input(ed, fakeKeyring({})), ...override })).rejects.toMatchObject({
+      code: 'BULWARK_NON_ASCII_ADDRESS',
+      address: 'jörg@example.org',
+    });
+    expect(ed.encrypt).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed address without encrypting', async () => {
+    const ed = editor(ARMOR);
+    await expect(
+      encryptAndBuildMessage({ ...input(ed, fakeKeyring({})), to: [{ email: 'not-an-address' }] }),
+    ).rejects.toMatchObject({ code: 'BULWARK_INVALID_ADDRESS', address: 'not-an-address' });
+    expect(ed.encrypt).not.toHaveBeenCalled();
+  });
+
+  it('maps the address codes to their own messages', () => {
+    expect(pgpErrorMessageKey({ code: 'BULWARK_NON_ASCII_ADDRESS' })).toBe('error_non_ascii_address');
+    expect(pgpErrorMessageKey({ code: 'BULWARK_INVALID_ADDRESS' })).toBe('error_invalid_address');
+  });
+
   it('encrypts to the sender as well when their key is in the local keyring', async () => {
     const ed = editor(ARMOR);
     await encryptAndBuildMessage(input(ed, fakeKeyring({ 'me@example.com': { keys: [key('LOC')] } })));

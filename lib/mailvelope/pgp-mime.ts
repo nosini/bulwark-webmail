@@ -205,11 +205,37 @@ function fold(name: string, tokens: string[]): string {
 
 const ADDR_SPEC_RE = /^[^\s<>",;:\\()[\]]+@[^\s<>",;:\\()[\]]+$/;
 
-function addrSpec(email: string): string {
+/**
+ * An address this message cannot carry. Carries a code so the composer can
+ * name the address in a translated message instead of showing the text below.
+ */
+export class PgpAddressError extends Error {
+  constructor(
+    readonly code: 'BULWARK_INVALID_ADDRESS' | 'BULWARK_NON_ASCII_ADDRESS',
+    readonly address: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PgpAddressError';
+  }
+}
+
+/**
+ * Validate one address, returning it trimmed. Exported so the send path can
+ * check every recipient — Bcc included, which never reaches a header — before
+ * the editor is asked to encrypt.
+ */
+export function addrSpec(email: string): string {
   const cleaned = email.trim();
-  if (!ADDR_SPEC_RE.test(cleaned)) throw new Error(`Invalid email address: ${JSON.stringify(email)}`);
+  if (!ADDR_SPEC_RE.test(cleaned)) {
+    throw new PgpAddressError('BULWARK_INVALID_ADDRESS', cleaned, `Invalid email address: ${JSON.stringify(email)}`);
+  }
   if (/[^\x21-\x7E]/.test(cleaned)) {
-    throw new Error(`Cannot send PGP/MIME to a non-ASCII address (${cleaned}): it would need SMTPUTF8`);
+    throw new PgpAddressError(
+      'BULWARK_NON_ASCII_ADDRESS',
+      cleaned,
+      `Cannot send PGP/MIME to a non-ASCII address (${cleaned}): it would need SMTPUTF8`,
+    );
   }
   return cleaned;
 }

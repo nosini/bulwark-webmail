@@ -3680,6 +3680,8 @@
     "send_blocked_failed": "Recipient keys could not be checked. Use Check again.",
     "undo_kept_draft": "Sending was stopped. The encrypted message was kept in Drafts.",
     "error_generic": "Encryption failed.",
+    "error_invalid_address": "Cannot encrypt: {address} is not a valid email address.",
+    "error_non_ascii_address": "Cannot encrypt: {address} uses non-ASCII characters, which needs a server that supports SMTPUTF8.",
     "error_no_key_for_recipient": "No PGP key was found for one of the recipients.",
     "error_no_own_key": "You have no private key to sign with. Generate or import one in Mailvelope.",
     "error_quota": "The message is too large to encrypt.",

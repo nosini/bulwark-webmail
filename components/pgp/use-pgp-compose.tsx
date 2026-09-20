@@ -217,8 +217,13 @@ export function usePgpCompose(options: UsePgpComposeOptions) {
           .getState()
           .sendRawEmail(params.client, blob, params.identityId, params.delayedUntil, envelopeRecipients, { forceEnvelope: true, isPgp: true });
       } catch (err) {
-        // Mailvelope errors carry a code; anything else (network, server) is shown as is.
-        if ((err as { code?: string } | undefined)?.code) throw new Error(t(pgpErrorMessageKey(err)));
+        // Mailvelope errors carry a code, and so do the address ones raised
+        // before encrypting; anything else (network, server) is shown as is.
+        const coded = err as { code?: string; address?: string } | undefined;
+        if (coded?.code) {
+          // Unused by messages without the placeholder, needed by the address ones.
+          throw new Error(t(pgpErrorMessageKey(err), { address: coded.address ?? '' }));
+        }
         throw err;
       }
     },

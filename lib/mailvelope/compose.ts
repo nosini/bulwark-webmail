@@ -1,4 +1,4 @@
-import { buildPgpMimeMessage, type MimeAddress } from './pgp-mime';
+import { addrSpec, buildPgpMimeMessage, type MimeAddress } from './pgp-mime';
 import { bareAddress, uniqueAddresses } from './recipients';
 import type { MailvelopeEditor, MailvelopeError, MailvelopeKeyring } from './types';
 
@@ -42,6 +42,12 @@ async function hasOwnKey(keyring: MailvelopeKeyring, address: string): Promise<b
  * lives in the extension's iframe and `armored` is already ciphertext.
  */
 export async function encryptAndBuildMessage(input: EncryptedMessageInput): Promise<EncryptedMessage> {
+  // Before the editor encrypts, not after: buildPgpMimeMessage would reject
+  // the same address further down, once the user has already answered the
+  // passphrase dialog and waited for a message that is then thrown away. Bcc
+  // is checked here too — it reaches no header, only the SMTP envelope.
+  for (const { email } of [input.from, ...input.to, ...input.cc, ...input.bcc]) addrSpec(email);
+
   const envelopeRecipients = uniqueAddresses([...input.to, ...input.cc, ...input.bcc].map((a) => a.email));
 
   // Encrypt to the sender too, so the copy in Sent stays readable.
@@ -64,8 +70,14 @@ export async function encryptAndBuildMessage(input: EncryptedMessageInput): Prom
   return { raw, envelopeRecipients };
 }
 
-/** Mailvelope error codes the composer explains to the user; anything else gets a generic message. */
+/**
+ * Error codes the composer explains to the user; anything else gets a generic
+ * message. Mailvelope's own codes, plus the BULWARK_ ones raised here — those
+ * are prefixed so they cannot collide with a code the extension adds later.
+ */
 export const PGP_ERROR_MESSAGE_KEYS: Record<string, string> = {
+  BULWARK_INVALID_ADDRESS: 'error_invalid_address',
+  BULWARK_NON_ASCII_ADDRESS: 'error_non_ascii_address',
   NO_KEY_FOR_RECIPIENT: 'error_no_key_for_recipient',
   NO_KEY_FOR_ENCRYPTION: 'error_no_own_key',
   NO_DEFAULT_KEY_FOUND: 'error_no_own_key',
