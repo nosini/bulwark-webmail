@@ -1716,6 +1716,13 @@ export function EmailComposer({
   // draft-part hydration path above (a blobId-only attachment is already a
   // supported shape, just never previously reachable from a plugin).
   const handlePluginAttachmentAdd = useCallback((upload: PluginAttachmentUpload) => {
+    // The blob is already on the server in cleartext by the time this runs, and
+    // the send path blanks `attachments` while encrypting, so accepting it would
+    // both leak the file and silently drop it. Same rule as addFiles.
+    if (pgpActiveRef.current) {
+      toast.info(t('pgp_attachments_blocked'));
+      return;
+    }
     setAttachments(prev => [
       ...prev,
       {
@@ -1725,7 +1732,7 @@ export function EmailComposer({
         blobId: upload.blobId,
       },
     ]);
-  }, []);
+  }, [pgpActiveRef, t]);
 
   // Inline preview for composer attachments, reusing the message viewer's
   // FilePreviewModal (so previewability and the open-in-new-tab safety gate are
@@ -1981,7 +1988,10 @@ export function EmailComposer({
       // tracked via inflightSaveRef.
       saveTimeoutRef.current = null;
       // Plugin observers (AI assist, grammar, …) get a debounced snapshot here.
-      emailHooks.onDraftChange.emit({
+      // Not while encrypting: the body is in the extension's iframe, but the
+      // recipients and subject are here, and they are exactly what an encrypted
+      // message is meant to keep out of everything but the message itself.
+      if (!pgpActiveRef.current) emailHooks.onDraftChange.emit({
         to: withInput(to, toInput).map(r => formatRecipient(r.name, r.email)),
         cc: withInput(cc, ccInput).map(r => formatRecipient(r.name, r.email)),
         bcc: withInput(bcc, bccInput).map(r => formatRecipient(r.name, r.email)),

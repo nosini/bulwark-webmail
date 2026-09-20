@@ -11,7 +11,16 @@ vi.mock('@/components/email/rich-text-editor', () => ({
   RichTextEditor: () => React.createElement('div', { 'data-testid': 'rich-text-editor' }),
 }));
 
-vi.mock('@/components/plugins/plugin-slot', () => ({ PluginSlot: () => null }));
+// Keeps each slot's extraProps reachable so a test can drive what a plugin
+// would call — the real slots render plugin code that is not loaded here.
+const slots = vi.hoisted(() => ({ extraProps: new Map<string, Record<string, unknown>>() }));
+
+vi.mock('@/components/plugins/plugin-slot', () => ({
+  PluginSlot: ({ name, extraProps }: { name?: string; extraProps?: Record<string, unknown> }) => {
+    if (name && extraProps) slots.extraProps.set(name, extraProps);
+    return null;
+  },
+}));
 vi.mock('@/components/identity/sub-address-helper', () => ({ SubAddressHelper: () => null }));
 vi.mock('@/components/templates/template-picker', () => ({ TemplatePicker: () => null }));
 vi.mock('@/components/templates/template-form', () => ({ TemplateForm: () => null }));
@@ -176,13 +185,15 @@ vi.mock('@/stores/toast-store', () => ({
   toast: { info: () => {}, error: () => {}, success: () => {} },
 }));
 
+const hooks = vi.hoisted(() => ({ onDraftChange: vi.fn() }));
+
 vi.mock('@/lib/plugin-hooks', () => ({
   emailHooks: {
     onComposerOpen: { call: async () => [] },
     onRecipientChange: { call: async () => [] },
     getRecipientSuggestions: { call: async () => [] },
     onRecipientChipsChange: { transform: async (chips: unknown) => chips },
-    onDraftChange: { emit: () => {} },
+    onDraftChange: { emit: (...args: unknown[]) => hooks.onDraftChange(...args) },
     onBeforeDraftAutoSave: { transform: async (draft: unknown) => draft },
     onBeforeEmailSend: { intercept: async () => true },
     onComposeSend: { intercept: async () => true },
@@ -395,6 +406,33 @@ describe('nothing of an encrypted message reaches the server', () => {
     await enablePgp();
     expect(screen.getByTitle('pgp_attachments_blocked')).toBeDisabled();
     expect(uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('refuses an attachment offered by a plugin', async () => {
+    render(<EmailComposer initialData={DRAFT} pgpSupported />);
+    await enablePgp();
+
+    // What a "attach from WebDAV" plugin does: upload to JMAP itself, then ask
+    // the composer to attach the blob. In PGP mode the blob is already on the
+    // server in cleartext and the send path drops `attachments` anyway.
+    const onAttach = slots.extraProps.get('composer-attachment-source')?.onAttach as (u: unknown) => void;
+    expect(onAttach).toBeTypeOf('function');
+    React.act(() => onAttach({ name: 'secret.pdf', type: 'application/pdf', size: 12, blobId: 'blob-plugin' }));
+
+    expect(screen.queryByText('secret.pdf')).not.toBeInTheDocument();
+  });
+
+  it('stops the debounced draft snapshot reaching plugin observers', async () => {
+    render(<EmailComposer initialData={DRAFT} pgpSupported />);
+    await enablePgp();
+    hooks.onDraftChange.mockClear();
+
+    // The body lives in the extension, but the recipients and subject are here
+    // and would be handed out every couple of seconds.
+    fireEvent.change(screen.getByPlaceholderText('subject_placeholder'), { target: { value: 'Quarterly numbers' } });
+    await sleep(2100);
+
+    expect(hooks.onDraftChange).not.toHaveBeenCalled();
   });
 });
 
