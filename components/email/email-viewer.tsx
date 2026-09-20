@@ -9,7 +9,7 @@ import { getRenderableHtmlBody } from "@/lib/email-body-selection";
 import { collectReferencedCids, isEmbeddedInBody } from "@/lib/attachment-visibility";
 import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
 import { fitEmailBodyWidth } from "@/lib/email-fit-width";
-import { detectPgpMessage } from "@/lib/mailvelope/detect";
+import { detectPgpMessage, pgpDetectionKey } from "@/lib/mailvelope/detect";
 import { MailvelopeDisplay } from "@/components/pgp/mailvelope-display";
 import { usePgpAvailable } from "@/stores/mailvelope-store";
 import { withBasePath } from "@/lib/browser-navigation";
@@ -761,11 +761,13 @@ export function EmailViewer({
   // and the message is encrypted, its iframe replaces the normal body. Detection
   // is memoized on a stable key so an unrelated change to `email` (keywords,
   // read state) does not restart decryption.
+  // The key is built from ids and lengths, never from the detection result:
+  // stringifying that copied the entire armored block, megabytes for a large
+  // inline message, on every render of the viewer.
   const pgpAvailable = usePgpAvailable();
-  const detectedPgp = pgpAvailable ? detectPgpMessage(email) : null;
-  const pgpKey = detectedPgp ? `${email?.id}:${JSON.stringify(detectedPgp)}` : '';
+  const pgpKey = pgpDetectionKey(email);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const pgpSource = useMemo(() => detectedPgp, [pgpKey]);
+  const pgpSource = useMemo(() => (pgpAvailable ? detectPgpMessage(email) : null), [pgpAvailable, pgpKey]);
   const [pgpShowOriginalFor, setPgpShowOriginalFor] = useState<string | null>(null);
   const showPgpDisplay = pgpSource !== null && pgpShowOriginalFor !== email?.id;
 

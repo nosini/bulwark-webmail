@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { Email, EmailBodyPart } from '@/lib/jmap/types';
-import { detectPgpMessage, extractEncryptedPayload, extractInlineArmor, normalizeArmor } from '@/lib/mailvelope/detect';
+import {
+  detectPgpMessage,
+  extractEncryptedPayload,
+  extractInlineArmor,
+  normalizeArmor,
+  pgpDetectionKey,
+} from '@/lib/mailvelope/detect';
 
 const ARMOR = ['-----BEGIN PGP MESSAGE-----', '', 'hQEMA1Vn7c1u8bVh', '=AbCd', '-----END PGP MESSAGE-----'].join('\n');
 const SIGNED = [
@@ -129,5 +135,41 @@ describe('armor helpers', () => {
     expect(extractEncryptedPayload(ARMOR.replace(/\n/g, '\r\n'))).toBe(ARMOR);
     expect(extractEncryptedPayload(SIGNED)).toBeNull();
     expect(extractEncryptedPayload(undefined)).toBeNull();
+  });
+});
+
+describe('pgpDetectionKey', () => {
+  const inline = (value: string, over: Partial<Email> = {}): Email =>
+    email({ textBody: [part({ partId: '1' })], bodyValues: { '1': { value } }, ...over });
+
+  it('is stable when only the read state or keywords change', () => {
+    const before = inline(ARMOR);
+    const after = inline(ARMOR, { keywords: { $seen: true } });
+    expect(pgpDetectionKey(after)).toBe(pgpDetectionKey(before));
+  });
+
+  it('changes once a lazily fetched body arrives', () => {
+    const empty = email({ textBody: [part({ partId: '1' })] });
+    expect(pgpDetectionKey(empty)).not.toBe(pgpDetectionKey(inline(ARMOR)));
+  });
+
+  it('changes when a truncated body is refetched in full', () => {
+    const truncated = email({
+      textBody: [part({ partId: '1' })],
+      bodyValues: { '1': { value: ARMOR, isTruncated: true } },
+    });
+    expect(pgpDetectionKey(truncated)).not.toBe(pgpDetectionKey(inline(ARMOR)));
+  });
+
+  it('distinguishes two messages and handles none at all', () => {
+    expect(pgpDetectionKey(inline(ARMOR))).not.toBe(pgpDetectionKey(inline(ARMOR, { id: 'e2' })));
+    expect(pgpDetectionKey(null)).toBe('');
+  });
+
+  it('never embeds the body text, however large', () => {
+    const huge = 'A'.repeat(200_000);
+    const key = pgpDetectionKey(inline(huge));
+    expect(key).not.toContain(huge);
+    expect(key.length).toBeLessThan(200);
   });
 });

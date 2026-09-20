@@ -126,3 +126,20 @@ export function detectPgpMessage(email: Email | null | undefined): PgpMessageSou
   if (!email) return null;
   return detectPgpMime(email) ?? detectInlinePgp(email);
 }
+
+/**
+ * Cheap identity for everything {@link detectPgpMessage} reads, so a caller can
+ * memoize the result across renders. Ids, types and lengths only — never body
+ * text, which for an inline PGP message is the whole armored block. It changes
+ * when a lazily fetched or untruncated body arrives, so detection runs again.
+ */
+export function pgpDetectionKey(email: Email | null | undefined): string {
+  if (!email) return '';
+  const bodies = (email.textBody ?? [])
+    .map((part) => {
+      const value = email.bodyValues?.[part.partId];
+      return `${part.partId}:${part.type ?? ''}:${value ? value.value.length : -1}:${value?.isTruncated ? 't' : ''}`;
+    })
+    .join(',');
+  return `${email.id}|${email.blobId ?? ''}|${email.bodyStructure?.type ?? ''}|${bodies}`;
+}
