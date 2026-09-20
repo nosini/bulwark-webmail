@@ -126,6 +126,49 @@ describe('buildPgpMimeMessage: headers', () => {
     expect((await PostalMime.parse(raw)).subject).toBe(subject);
   });
 
+  // RFC 5322 §2.1.1 caps a line at 998 octets, and folding cannot break inside
+  // a token. An unbreakable token is encoded instead: RFC 2047 §6.2 drops the
+  // whitespace between adjacent encoded-words, so the text survives intact.
+  it('keeps every header line under 998 octets for an unbreakable subject', async () => {
+    const subject = `https://example.org/${'a'.repeat(1500)}`;
+    const { raw } = buildPgpMimeMessage({ ...base, subject });
+    for (const line of split(raw).head.split('\r\n')) expect(line.length).toBeLessThanOrEqual(998);
+    expect((await PostalMime.parse(raw)).subject).toBe(subject);
+  });
+
+  it('keeps every header line under 998 octets for an unbreakable display name', async () => {
+    const name = 'N'.repeat(1500);
+    const { raw } = buildPgpMimeMessage({ ...base, to: [{ name, email: 'bob@example.org' }] });
+    for (const line of split(raw).head.split('\r\n')) expect(line.length).toBeLessThanOrEqual(998);
+    const parsed = await PostalMime.parse(raw);
+    expect(parsed.to?.[0]).toMatchObject({ name, address: 'bob@example.org' });
+  });
+
+  it('encodes rather than quotes a long display name holding a comma', async () => {
+    // Falling back to the raw words would leave the comma loose and split the
+    // address list into two recipients.
+    const name = `${'word '.repeat(300).trim()}, Jr.`;
+    const { raw } = buildPgpMimeMessage({ ...base, to: [{ name, email: 'bob@example.org' }] });
+    for (const line of split(raw).head.split('\r\n')) expect(line.length).toBeLessThanOrEqual(998);
+    const parsed = await PostalMime.parse(raw);
+    expect(parsed.to).toHaveLength(1);
+    expect(parsed.to?.[0]).toMatchObject({ name, address: 'bob@example.org' });
+  });
+
+  it('drops a message-id too long to fold instead of refusing to send', () => {
+    const huge = `${'x'.repeat(1200)}@example.org`;
+    const { raw } = buildPgpMimeMessage({ ...base, inReplyTo: [huge], references: [huge, 'sane@example.org'] });
+    const head = split(raw).head;
+    expect(head).not.toContain('In-Reply-To:');
+    expect(unfold(head)).toContain('References: <sane@example.org>');
+    for (const line of head.split('\r\n')) expect(line.length).toBeLessThanOrEqual(998);
+  });
+
+  it('refuses an address too long to fold', () => {
+    const email = `${'a'.repeat(1200)}@example.org`;
+    expect(() => buildPgpMimeMessage({ ...base, to: [{ email }] })).toThrow(/998 octets/);
+  });
+
   it('folds long recipient lists between mailboxes', async () => {
     const to = Array.from({ length: 12 }, (_, i) => ({ name: `Person ${i}`, email: `person${i}@example.org` }));
     const { raw } = buildPgpMimeMessage({ ...base, to });

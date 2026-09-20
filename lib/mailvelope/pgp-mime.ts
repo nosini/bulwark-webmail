@@ -46,6 +46,14 @@ const FOLD_AT = 76;
  * RFC 2047's 75, and still inside the 78-column fold after "Subject: ".
  */
 const ENCODED_WORD_BYTES = 39;
+/** RFC 5322 §2.1.1: a line may not exceed 998 octets, excluding the CRLF. */
+const MAX_LINE_OCTETS = 998;
+/**
+ * Longest token that always fits a folded line: folding puts a token on a line
+ * of its own after the header name (`Subject: `) or a single space, and the
+ * slack covers the longest name emitted here.
+ */
+const MAX_TOKEN_OCTETS = MAX_LINE_OCTETS - 32;
 
 const ARMOR_BEGIN = '-----BEGIN PGP MESSAGE-----';
 const ARMOR_END = '-----END PGP MESSAGE-----';
@@ -111,6 +119,15 @@ function cleanText(value: string): string {
   return value.replace(CONTROLS_RE, ' ').trim();
 }
 
+function octetLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+/** A token short enough to fold onto a line of its own within MAX_LINE_OCTETS. */
+function fitsLine(token: string): boolean {
+  return octetLength(token) <= MAX_TOKEN_OCTETS;
+}
+
 function utf8ToBase64(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = '';
@@ -118,12 +135,13 @@ function utf8ToBase64(value: string): string {
   return btoa(binary);
 }
 
-/** RFC 2047 encoded-words (unbreakable tokens) for text that is not plain printable ASCII. */
-function encodeWords(value: string): string[] {
-  const text = cleanText(value);
-  if (!text) return [];
-  if (!/[^\x20-\x7E]/.test(text)) return text.split(/ +/);
-
+/**
+ * RFC 2047 encoded-words for already-cleaned text. Each word stays under the
+ * fold width, and RFC 2047 §6.2 drops the whitespace between adjacent
+ * encoded-words, so the text survives folding exactly — unlike breaking a long
+ * token by hand, which unfolds with a space inserted into it.
+ */
+function encodedWords(text: string): string[] {
   const encoder = new TextEncoder();
   const words: string[] = [];
   let chunk = '';
@@ -143,6 +161,20 @@ function encodeWords(value: string): string[] {
   return words;
 }
 
+/**
+ * Header text as breakable tokens. Plain ASCII words are kept as they are, but
+ * a word too long to fit a line — a pasted URL in a subject — is encoded
+ * instead, because folding cannot break inside a token and the line would
+ * otherwise run past the 998-octet limit.
+ */
+function encodeWords(value: string): string[] {
+  const text = cleanText(value);
+  if (!text) return [];
+  const words = text.split(/ +/);
+  if (!/[^\x20-\x7E]/.test(text) && words.every(fitsLine)) return words;
+  return encodedWords(text);
+}
+
 /** Greedy fold of unbreakable tokens: a line break replaces the space before a token. */
 function fold(name: string, tokens: string[]): string {
   const lines: string[] = [];
@@ -160,6 +192,14 @@ function fold(name: string, tokens: string[]): string {
     lineHasToken = true;
   }
   lines.push(line);
+  // Every token that can be broken up is already short enough, so a line over
+  // the limit here means an unbreakable one: an absurd addr-spec. There is no
+  // legal way to emit it, so refuse rather than send a malformed message.
+  for (const emitted of lines) {
+    if (octetLength(emitted) > MAX_LINE_OCTETS) {
+      throw new Error(`Refusing to build a PGP/MIME message: the ${name} header cannot be folded under 998 octets`);
+    }
+  }
   return lines.join(CRLF);
 }
 
@@ -180,8 +220,15 @@ function mailboxTokens({ name, email }: MimeAddress): string[] {
   const display = name ? cleanText(name) : '';
   if (!display) return [addr];
   if (/[^\x20-\x7E]/.test(display)) return [...encodeWords(display), `<${addr}>`];
-  if (/[()<>[\]:;@\\,."]/.test(display)) return [`"${display.replace(/["\\]/g, '\\$&')}"`, `<${addr}>`];
-  return [...display.split(/ +/), `<${addr}>`];
+  if (/[()<>[\]:;@\\,."]/.test(display)) {
+    const quoted = `"${display.replace(/["\\]/g, '\\$&')}"`;
+    // Encoded-words need no quoting, and unlike the raw words they cannot
+    // leave a bare comma loose in an address list.
+    return fitsLine(quoted) ? [quoted, `<${addr}>`] : [...encodedWords(display), `<${addr}>`];
+  }
+  const words = display.split(/ +/);
+  if (!words.every(fitsLine)) return [...encodedWords(display), `<${addr}>`];
+  return [...words, `<${addr}>`];
 }
 
 /** Address-list tokens: the comma trails the last token of every mailbox but the final one. */
@@ -239,8 +286,11 @@ export function buildPgpMimeMessage(opts: PgpMimeMessageOptions): BuiltPgpMimeMe
   if (opts.to.length === 0 && cc.length === 0) throw new Error('A PGP/MIME message needs at least one recipient');
 
   const messageId = opts.messageId ? bracketed(opts.messageId) : generatePgpMessageId(opts.from.email);
-  const inReplyTo = (opts.inReplyTo ?? []).map(bracketed).filter(Boolean);
-  const references = (opts.references ?? []).map(bracketed).filter(Boolean);
+  // A msg-id cannot be folded or encoded, so one too long for a line is
+  // dropped: threading degrades, which beats being unable to reply at all to a
+  // message whose Message-ID was absurd.
+  const inReplyTo = (opts.inReplyTo ?? []).map(bracketed).filter((id) => id && fitsLine(id));
+  const references = (opts.references ?? []).map(bracketed).filter((id) => id && fitsLine(id));
 
   const headers = [
     fold('Date', [rfc5322Date(opts.date ?? new Date())]),
