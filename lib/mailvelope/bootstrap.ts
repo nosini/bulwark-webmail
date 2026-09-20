@@ -47,6 +47,27 @@ export function whenMailvelopeReady(timeoutMs: number = MAILVELOPE_DETECT_TIMEOU
   return readyPromise;
 }
 
+/**
+ * Call `listener` when the extension announces itself after detection has
+ * already finished — it was installed, enabled, authorized for this origin, or
+ * finished updating while the page stayed open. The cached result is dropped
+ * first, so the listener only has to detect again.
+ *
+ * Without this the first {@link MAILVELOPE_DETECT_TIMEOUT_MS} decides for the
+ * lifetime of the page: a slow page or a late injection meant no PGP until
+ * reload, and an extension that reconnected after `mailvelope-disconnect`
+ * stayed unavailable.
+ */
+export function onMailvelopeArrival(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = () => {
+    readyPromise = null;
+    listener();
+  };
+  window.addEventListener('mailvelope', handler);
+  return () => window.removeEventListener('mailvelope', handler);
+}
+
 /** Forget the cached detection result. Tests only. */
 export function resetMailvelopeReadyForTests(): void {
   readyPromise = null;

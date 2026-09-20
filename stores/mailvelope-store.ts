@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import { debug } from '@/lib/debug';
-import { getOrCreateKeyring, whenMailvelopeReady } from '@/lib/mailvelope/bootstrap';
+import { getOrCreateKeyring, onMailvelopeArrival, whenMailvelopeReady } from '@/lib/mailvelope/bootstrap';
 import type { MailvelopeApi, MailvelopeKeyring } from '@/lib/mailvelope/types';
 
 type MailvelopeStatus = 'idle' | 'detecting' | 'ready' | 'unavailable';
@@ -19,6 +19,7 @@ interface MailvelopeStore {
 
 let initPromise: Promise<void> | null = null;
 let disconnectListenerAttached = false;
+let arrivalUnsubscribe: (() => void) | null = null;
 
 export const useMailvelopeStore = create<MailvelopeStore>((set, get) => ({
   status: 'idle',
@@ -28,6 +29,16 @@ export const useMailvelopeStore = create<MailvelopeStore>((set, get) => ({
 
   init: () => {
     if (initPromise) return initPromise;
+    if (!arrivalUnsubscribe) {
+      // An extension that shows up after detection gave up, or comes back after
+      // `mailvelope-disconnect`, starts detection over instead of leaving the
+      // page without PGP until it is reloaded.
+      arrivalUnsubscribe = onMailvelopeArrival(() => {
+        if (get().status === 'ready') return;
+        initPromise = null;
+        void get().init();
+      });
+    }
     set({ status: 'detecting' });
     initPromise = (async () => {
       const api = await whenMailvelopeReady();
@@ -78,5 +89,7 @@ export function usePgpAvailable(): boolean {
 export function resetMailvelopeStoreForTests(): void {
   initPromise = null;
   disconnectListenerAttached = false;
+  arrivalUnsubscribe?.();
+  arrivalUnsubscribe = null;
   useMailvelopeStore.setState({ status: 'idle', api: null, keyring: null, version: null });
 }

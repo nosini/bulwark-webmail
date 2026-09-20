@@ -3,6 +3,7 @@ import {
   MAILVELOPE_DETECT_TIMEOUT_MS,
   MAILVELOPE_KEYRING_ID,
   getOrCreateKeyring,
+  onMailvelopeArrival,
   resetMailvelopeReadyForTests,
   whenMailvelopeReady,
 } from '@/lib/mailvelope/bootstrap';
@@ -73,13 +74,40 @@ describe('whenMailvelopeReady', () => {
     expect(logs).not.toHaveBeenCalled();
   });
 
-  it('is a singleton, and a late extension does not resurrect a timed-out detection', async () => {
+  it('is a singleton, and an extension appearing unannounced does not reopen it', async () => {
     const first = whenMailvelopeReady();
     expect(whenMailvelopeReady()).toBe(first);
     await vi.advanceTimersByTimeAsync(MAILVELOPE_DETECT_TIMEOUT_MS);
     await expect(first).resolves.toBeNull();
+    // Setting the global without announcing it is not something the extension
+    // does; only the event drops the cached answer.
     window.mailvelope = fakeApi();
     await expect(whenMailvelopeReady()).resolves.toBeNull();
+  });
+});
+
+describe('onMailvelopeArrival', () => {
+  it('drops a timed-out result so the next detection sees the extension', async () => {
+    const listener = vi.fn();
+    const stop = onMailvelopeArrival(listener);
+    const timedOut = whenMailvelopeReady();
+    await vi.advanceTimersByTimeAsync(MAILVELOPE_DETECT_TIMEOUT_MS);
+    await expect(timedOut).resolves.toBeNull();
+
+    const api = fakeApi();
+    window.mailvelope = api;
+    window.dispatchEvent(new CustomEvent('mailvelope', { detail: api }));
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    await expect(whenMailvelopeReady()).resolves.toBe(api);
+    stop();
+  });
+
+  it('stops calling back once unsubscribed', () => {
+    const listener = vi.fn();
+    onMailvelopeArrival(listener)();
+    window.dispatchEvent(new CustomEvent('mailvelope', { detail: fakeApi() }));
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 
@@ -152,5 +180,46 @@ describe('mailvelope store', () => {
     await useMailvelopeStore.getState().init();
     window.dispatchEvent(new Event('mailvelope-disconnect'));
     expect(selectPgpAvailable(useMailvelopeStore.getState())).toBe(false);
+  });
+
+  it('picks up an extension that announces itself after detection gave up', async () => {
+    const init = useMailvelopeStore.getState().init();
+    await vi.advanceTimersByTimeAsync(MAILVELOPE_DETECT_TIMEOUT_MS);
+    await init;
+    expect(useMailvelopeStore.getState().status).toBe('unavailable');
+
+    const api = fakeApi();
+    window.mailvelope = api;
+    window.dispatchEvent(new CustomEvent('mailvelope', { detail: api }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const state = useMailvelopeStore.getState();
+    expect(state.status).toBe('ready');
+    expect(selectPgpAvailable(state)).toBe(true);
+  });
+
+  it('comes back when the extension reconnects after a disconnect', async () => {
+    window.mailvelope = fakeApi();
+    await useMailvelopeStore.getState().init();
+    window.dispatchEvent(new Event('mailvelope-disconnect'));
+    expect(selectPgpAvailable(useMailvelopeStore.getState())).toBe(false);
+
+    // An update finished and the content script injected itself again.
+    const api = fakeApi();
+    window.mailvelope = api;
+    window.dispatchEvent(new CustomEvent('mailvelope', { detail: api }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(selectPgpAvailable(useMailvelopeStore.getState())).toBe(true);
+    expect(useMailvelopeStore.getState().api).toBe(api);
+  });
+
+  it('ignores an announcement while it is already ready', async () => {
+    const api = fakeApi();
+    window.mailvelope = api;
+    await useMailvelopeStore.getState().init();
+    window.dispatchEvent(new CustomEvent('mailvelope', { detail: api }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.getKeyring).toHaveBeenCalledTimes(1);
   });
 });
