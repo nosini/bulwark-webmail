@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { MailvelopeEditor } from '../mailvelope-editor';
@@ -42,6 +42,23 @@ describe('MailvelopeEditor', () => {
     expect(options).not.toHaveProperty('predefinedText');
     // The old handle is dropped before the new editor arrives.
     expect(onEditor).toHaveBeenCalledWith(null);
+  });
+
+  it('reports a blocked frame, which createEditorContainer does not', async () => {
+    // The container can resolve even when the frame it asked for was refused:
+    // the editor then looks ready and is blank, one Send away from encrypting
+    // nothing at all.
+    const onError = vi.fn();
+    render(<MailvelopeEditor signMsg={false} initialText="" onEditor={vi.fn()} onError={onError} />);
+    await waitFor(() => expect(mv.createEditorContainer).toHaveBeenCalledTimes(1));
+
+    fireEvent(document, Object.assign(new Event('securitypolicyviolation'), {
+      effectiveDirective: 'frame-src',
+      blockedURI: 'chrome-extension://kajibbejlbohfaggdiogboambcijhkke/editor.html',
+    }));
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatchObject({ code: 'BULWARK_FRAME_BLOCKED' });
   });
 
   it('does not restart when only the text changes', async () => {

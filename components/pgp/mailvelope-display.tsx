@@ -8,6 +8,7 @@ import { extractEncryptedPayload, type PgpMessageSource } from '@/lib/mailvelope
 import { useMailvelopeStore } from '@/stores/mailvelope-store';
 import type { MailvelopeError } from '@/lib/mailvelope/types';
 import { createMailvelopeHost } from './mailvelope-host';
+import { useExtensionFrameBlocked } from './use-extension-frame-blocked';
 
 interface MailvelopeDisplayProps {
   source: PgpMessageSource;
@@ -42,6 +43,10 @@ export function MailvelopeDisplay({ source, senderAddress, fetchBlob, onShowOrig
   fetchBlobRef.current = fetchBlob;
   const onShowOriginalRef = useRef(onShowOriginal);
   onShowOriginalRef.current = onShowOriginal;
+
+  // A blocked frame never loads and never errors: without this the spinner
+  // would run for as long as the message stayed open.
+  useExtensionFrameBlocked(phase === 'loading', () => setPhase('failed'));
 
   useEffect(() => {
     const container = containerRef.current;

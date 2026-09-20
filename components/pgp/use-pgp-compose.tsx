@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useConfirmDialog } from '@/hooks/use-confirm-dialog';
-import { encryptAndBuildMessage, pgpErrorMessageKey } from '@/lib/mailvelope/compose';
+import { PGP_ERROR_MESSAGE_KEYS, encryptAndBuildMessage, pgpErrorMessageKey } from '@/lib/mailvelope/compose';
 import type { MimeAddress } from '@/lib/mailvelope/pgp-mime';
 import { importRecipientKey, type RecipientKeyStatus } from '@/lib/mailvelope/recipients';
 import { sanitizeDisplayName } from '@/lib/rfc5322-mailbox';
@@ -147,6 +147,13 @@ export function usePgpCompose(options: UsePgpComposeOptions) {
   const onEditorError = useCallback(
     (err: unknown) => {
       setEditorStatus('error');
+      // A known code explains itself; only fall back to the raw text otherwise.
+      const code = (err as { code?: string } | undefined)?.code;
+      const key = code ? PGP_ERROR_MESSAGE_KEYS[code] : undefined;
+      if (key) {
+        toast.error(t(key, { address: '' }));
+        return;
+      }
       toast.error(t('editor_failed', { message: err instanceof Error ? err.message : String(err) }));
     },
     [t],

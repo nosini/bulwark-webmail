@@ -76,6 +76,7 @@ export async function encryptAndBuildMessage(input: EncryptedMessageInput): Prom
  * are prefixed so they cannot collide with a code the extension adds later.
  */
 export const PGP_ERROR_MESSAGE_KEYS: Record<string, string> = {
+  BULWARK_FRAME_BLOCKED: 'error_frame_blocked',
   BULWARK_INVALID_ADDRESS: 'error_invalid_address',
   BULWARK_NON_ASCII_ADDRESS: 'error_non_ascii_address',
   NO_KEY_FOR_RECIPIENT: 'error_no_key_for_recipient',

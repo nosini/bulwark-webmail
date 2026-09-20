@@ -64,6 +64,22 @@ describe('MailvelopeDisplay', () => {
     expect(mv.createDisplayContainer).not.toHaveBeenCalled();
   });
 
+  it('stops waiting when the page CSP blocks the extension frame', async () => {
+    // The container never loads and never errors, so without this the spinner
+    // would run for as long as the message stayed open.
+    const never = new Promise<never>(() => {});
+    mv.createDisplayContainer.mockReturnValue(never);
+    render(<MailvelopeDisplay source={{ kind: 'inline', armored: ARMOR }} fetchBlob={vi.fn()} onShowOriginal={vi.fn()} />);
+    expect(await screen.findByText('display_loading')).toBeInTheDocument();
+
+    fireEvent(document, Object.assign(new Event('securitypolicyviolation'), {
+      effectiveDirective: 'frame-src',
+      blockedURI: 'chrome-extension://kajibbejlbohfaggdiogboambcijhkke/decryptMessage.html',
+    }));
+
+    expect(await screen.findByText('display_failed')).toBeInTheDocument();
+  });
+
   it('shows the failure state when the blob cannot be fetched', async () => {
     render(<MailvelopeDisplay source={mime} fetchBlob={vi.fn().mockRejectedValue(new Error('404'))} onShowOriginal={vi.fn()} />);
     expect(await screen.findByText('display_failed')).toBeInTheDocument();

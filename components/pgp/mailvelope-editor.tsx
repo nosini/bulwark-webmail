@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useMailvelopeStore } from '@/stores/mailvelope-store';
 import type { MailvelopeEditor as MailvelopeEditorHandle } from '@/lib/mailvelope/types';
 import { createMailvelopeHost } from './mailvelope-host';
+import { frameBlockedError, useExtensionFrameBlocked } from './use-extension-frame-blocked';
 
 interface MailvelopeEditorProps {
   /** Sign in addition to encrypting. Fixed for the editor's lifetime: change it and the editor restarts. */
@@ -40,6 +41,11 @@ export function MailvelopeEditor({ signMsg, initialText, onEditor, onError }: Ma
   onEditorRef.current = onEditor;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+
+  // Watched for the editor's whole life: createEditorContainer can resolve
+  // even when the frame it asked for was refused, and the editor then looks
+  // ready while being unusable.
+  useExtensionFrameBlocked(true, () => onErrorRef.current(frameBlockedError()));
 
   useEffect(() => {
     const container = containerRef.current;
